@@ -4,8 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot,
+  ClipboardList,
   LayoutDashboard,
   MessageSquare,
+  PieChart,
   Send,
   Settings,
   Users,
@@ -47,6 +49,19 @@ const navBot = [
     label: "友だち一覧",
     href: "/bot/users",
     icon: Users,
+  },
+];
+
+const navSurvey = [
+  {
+    label: "アンケート一覧",
+    href: "/survey",
+    icon: ClipboardList,
+  },
+  {
+    label: "回答結果",
+    href: "/survey/results",
+    icon: PieChart,
   },
 ];
 
@@ -109,6 +124,25 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navBot.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <SidebarMenuButton
+                    render={<Link href={item.href} />}
+                    isActive={pathname === item.href}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    <span>{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>アンケート</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navSurvey.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
                     render={<Link href={item.href} />}
