@@ -58,18 +58,36 @@ export async function POST(request: NextRequest) {
 
         case "postback": {
           // アンケート回答処理
-          const data = new URLSearchParams(event.source.userId ? event.postback.data : "");
-          const surveyId = data.get("survey");
-          const questionId = data.get("question");
-          const choiceId = data.get("choice");
+          const pbUserId = event.source.userId;
+          const pbData = new URLSearchParams(pbUserId ? event.postback.data : "");
+          const surveyId = pbData.get("survey");
+          const questionId = pbData.get("question");
+          const choiceId = pbData.get("choice");
 
-          if (surveyId && questionId && choiceId) {
-            // 友だち情報取得
-            const { data: friend } = await supabase
+          if (surveyId && questionId && choiceId && pbUserId) {
+            // 友だち情報取得（未登録なら自動登録）
+            let { data: friend } = await supabase
               .from("friends")
               .select("id")
-              .eq("line_user_id", event.source.userId)
+              .eq("line_user_id", pbUserId)
               .single();
+
+            if (!friend) {
+              const pbProfile = await getUserProfile(pbUserId);
+              const { data: newFriend } = await supabase.from("friends").upsert(
+                {
+                  line_user_id: pbUserId,
+                  display_name: pbProfile.displayName,
+                  picture_url: pbProfile.pictureUrl,
+                  status_message: pbProfile.statusMessage,
+                  is_blocked: false,
+                  joined_at: new Date().toISOString(),
+                  last_active_at: new Date().toISOString(),
+                },
+                { onConflict: "line_user_id" }
+              ).select("id").single();
+              friend = newFriend;
+            }
 
             if (friend) {
               // 回答を保存
@@ -121,11 +139,38 @@ export async function POST(request: NextRequest) {
         }
 
         case "message": {
-          // メッセージ受信時：最終アクティブ更新
-          await supabase
-            .from("friends")
-            .update({ last_active_at: new Date().toISOString() })
-            .eq("line_user_id", event.source.userId);
+          // メッセージ受信時：友だち未登録なら登録＋最終アクティブ更新
+          const userId = event.source.userId;
+          if (userId) {
+            const { data: existing } = await supabase
+              .from("friends")
+              .select("id")
+              .eq("line_user_id", userId)
+              .single();
+
+            if (existing) {
+              // 既存：最終アクティブ更新
+              await supabase
+                .from("friends")
+                .update({ last_active_at: new Date().toISOString() })
+                .eq("line_user_id", userId);
+            } else {
+              // 未登録：プロフィール取得して新規登録
+              const msgProfile = await getUserProfile(userId);
+              await supabase.from("friends").upsert(
+                {
+                  line_user_id: userId,
+                  display_name: msgProfile.displayName,
+                  picture_url: msgProfile.pictureUrl,
+                  status_message: msgProfile.statusMessage,
+                  is_blocked: false,
+                  joined_at: new Date().toISOString(),
+                  last_active_at: new Date().toISOString(),
+                },
+                { onConflict: "line_user_id" }
+              );
+            }
+          }
           break;
         }
       }
