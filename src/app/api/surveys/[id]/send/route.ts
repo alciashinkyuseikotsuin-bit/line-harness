@@ -10,6 +10,16 @@ export async function POST(
   const { id } = await params;
   const supabase = getSupabaseAdmin();
 
+  // リクエストボディからモードを取得
+  let mode: "test" | "all" = "test"; // デフォルトはテスト配信（安全側）
+  try {
+    const body = await request.json();
+    mode = body.mode === "all" ? "all" : "test";
+  } catch {
+    // bodyが空の場合はテストモード
+    mode = "test";
+  }
+
   // アンケートと質問・選択肢を取得
   const { data: survey, error } = await supabase
     .from("surveys")
@@ -38,15 +48,27 @@ export async function POST(
     );
   }
 
-  // 全友だちを取得
-  const { data: friends } = await supabase
+  // 配信対象を取得
+  let friendsQuery = supabase
     .from("friends")
-    .select("line_user_id")
+    .select("line_user_id, display_name")
     .eq("is_blocked", false);
+
+  if (mode === "test") {
+    // テスト配信: 「テスト配信」タグが付いた友だちのみ（堀優介のみ）
+    friendsQuery = friendsQuery.contains("tags", ["テスト配信"]);
+  }
+
+  const { data: friends } = await friendsQuery;
 
   if (!friends || friends.length === 0) {
     return NextResponse.json(
-      { error: "配信対象の友だちがいません" },
+      {
+        error:
+          mode === "test"
+            ? "テスト配信対象（「テスト配信」タグ付き）の友だちがいません"
+            : "配信対象の友だちがいません",
+      },
       { status: 400 }
     );
   }
@@ -57,8 +79,9 @@ export async function POST(
   );
 
   let sentCount = 0;
+  const sentTo: string[] = [];
 
-  // 最初の質問を全友だちに送信
+  // 最初の質問を対象友だちに送信
   if (questions.length > 0) {
     const firstQ = questions[0];
     const choices = (firstQ.survey_choices || [])
@@ -75,17 +98,20 @@ export async function POST(
           choices
         );
         sentCount++;
+        sentTo.push(friend.display_name || friend.line_user_id);
       } catch (err) {
         console.error(`Failed to send to ${friend.line_user_id}:`, err);
       }
     }
   }
 
-  // ステータスを active に更新
-  await supabase
-    .from("surveys")
-    .update({ status: "active", updated_at: new Date().toISOString() })
-    .eq("id", id);
+  // テスト配信の場合はステータスを変えない（下書きのまま）
+  if (mode === "all") {
+    await supabase
+      .from("surveys")
+      .update({ status: "active", updated_at: new Date().toISOString() })
+      .eq("id", id);
+  }
 
-  return NextResponse.json({ sentCount });
+  return NextResponse.json({ sentCount, mode, sentTo });
 }

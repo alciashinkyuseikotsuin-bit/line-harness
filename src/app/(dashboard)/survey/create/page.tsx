@@ -86,6 +86,9 @@ export default function SurveyCreatePage() {
   ]);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [showAllConfirm, setShowAllConfirm] = useState(false);
+  const [savedSurveyId, setSavedSurveyId] = useState<string | null>(null);
 
   function applyTemplate(key: string) {
     const t = TEMPLATES[key];
@@ -170,7 +173,8 @@ export default function SurveyCreatePage() {
     );
   }
 
-  async function saveSurvey(andSend: boolean) {
+  // 下書き保存のみ
+  async function saveDraft() {
     if (!title.trim()) {
       alert("アンケート名を入力してください");
       return;
@@ -180,8 +184,7 @@ export default function SurveyCreatePage() {
       return;
     }
 
-    andSend ? setSending(true) : setSaving(true);
-
+    setSaving(true);
     try {
       const res = await fetch("/api/surveys", {
         method: "POST",
@@ -195,23 +198,94 @@ export default function SurveyCreatePage() {
         return;
       }
 
-      if (andSend && data.survey?.id) {
-        const sendRes = await fetch(`/api/surveys/${data.survey.id}/send`, {
-          method: "POST",
-        });
-        if (!sendRes.ok) {
-          const sendData = await sendRes.json();
-          alert(sendData.error || "LINE配信に失敗しました");
-          return;
-        }
-      }
-
+      setSavedSurveyId(data.survey?.id || null);
       router.push("/survey");
     } catch {
       alert("エラーが発生しました");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // テスト配信（堀優介のみ）
+  async function sendTest() {
+    if (!title.trim()) {
+      alert("アンケート名を入力してください");
+      return;
+    }
+    if (questions.some((q) => !q.text.trim())) {
+      alert("質問文を入力してください");
+      return;
+    }
+
+    setSending(true);
+    setTestResult(null);
+    try {
+      // まず保存
+      const res = await fetch("/api/surveys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, description, questions }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "保存に失敗しました");
+        return;
+      }
+
+      const surveyId = data.survey?.id;
+      setSavedSurveyId(surveyId);
+
+      if (surveyId) {
+        // テストモードで送信（「テスト配信」タグの人だけ）
+        const sendRes = await fetch(`/api/surveys/${surveyId}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "test" }),
+        });
+        const sendData = await sendRes.json();
+        if (sendRes.ok) {
+          setTestResult(
+            `✅ テスト配信完了: ${(sendData.sentTo || []).join(", ")} に送信しました（${sendData.sentCount}人）`
+          );
+        } else {
+          setTestResult(`❌ ${sendData.error || "テスト配信に失敗しました"}`);
+        }
+      }
+    } catch {
+      setTestResult("❌ エラーが発生しました");
+    } finally {
       setSending(false);
+    }
+  }
+
+  // 本配信（全員） - 二重確認後のみ
+  async function sendAll() {
+    if (!savedSurveyId) {
+      alert("先にテスト配信を行ってください");
+      return;
+    }
+
+    setSending(true);
+    try {
+      const sendRes = await fetch(`/api/surveys/${savedSurveyId}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "all" }),
+      });
+      const sendData = await sendRes.json();
+      if (sendRes.ok) {
+        alert(`配信完了: ${sendData.sentCount}人に送信しました`);
+        router.push("/survey");
+      } else {
+        alert(sendData.error || "配信に失敗しました");
+      }
+    } catch {
+      alert("エラーが発生しました");
+    } finally {
+      setSending(false);
+      setShowAllConfirm(false);
     }
   }
 
@@ -420,23 +494,74 @@ export default function SurveyCreatePage() {
 
       <Separator />
 
+      {/* テスト結果 */}
+      {testResult && (
+        <div className={`rounded-md px-4 py-3 text-sm ${testResult.startsWith("✅") ? "bg-green-50 text-green-800 border border-green-200" : "bg-red-50 text-red-800 border border-red-200"}`}>
+          {testResult}
+        </div>
+      )}
+
+      {/* 本配信確認ダイアログ */}
+      {showAllConfirm && (
+        <Card className="border-red-400 border-2">
+          <CardContent className="pt-6">
+            <h3 className="font-bold text-lg text-red-600 mb-3">⚠️ 全友だちに配信しますか？</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              この操作は取り消せません。全友だちにアンケートが送信されます。
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowAllConfirm(false)}
+              >
+                キャンセル
+              </Button>
+              <Button
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                disabled={sending}
+                onClick={sendAll}
+              >
+                {sending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                本当に全員に配信する
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex gap-3 justify-end">
         <Button
           variant="outline"
-          onClick={() => saveSurvey(false)}
+          onClick={saveDraft}
           disabled={saving || sending}
         >
           {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           下書き保存
         </Button>
         <Button
-          className="bg-[#06C755] hover:bg-[#05b34c]"
-          onClick={() => saveSurvey(true)}
+          variant="outline"
+          className="border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
+          onClick={sendTest}
           disabled={saving || sending}
         >
-          {sending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          {sending && !showAllConfirm && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           <Send className="h-4 w-4 mr-2" />
-          LINE で配信する
+          テスト配信（堀優介のみ）
+        </Button>
+        <Button
+          className="bg-[#06C755] hover:bg-[#05b34c]"
+          onClick={() => {
+            if (!savedSurveyId) {
+              alert("先にテスト配信を行ってから本配信してください");
+              return;
+            }
+            setShowAllConfirm(true);
+          }}
+          disabled={saving || sending || !savedSurveyId}
+        >
+          <Send className="h-4 w-4 mr-2" />
+          全員に配信
         </Button>
       </div>
     </div>

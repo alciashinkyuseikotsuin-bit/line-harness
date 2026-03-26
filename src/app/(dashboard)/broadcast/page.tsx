@@ -55,6 +55,7 @@ export default function BroadcastPage() {
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [friendCount, setFriendCount] = useState(0);
+  const [testDone, setTestDone] = useState(false);
 
   useEffect(() => {
     fetch("/api/broadcast")
@@ -68,7 +69,41 @@ export default function BroadcastPage() {
       .then((d) => setFriendCount((d.friends || []).length));
   }, []);
 
+  // テスト配信（堀優介のみ）
+  async function sendTestBroadcast() {
+    setSending(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `[テスト] ${title || "一斉配信"}`,
+          message,
+          targetType: "segment",
+          targetTags: ["テスト配信"],
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult(`✅ テスト配信完了: ${data.deliveredCount}人に送信しました（テスト配信タグの友だちのみ）`);
+        setTestDone(true);
+      } else {
+        setResult(`❌ エラー: ${data.error}`);
+      }
+    } catch {
+      setResult("❌ テスト配信に失敗しました");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // 本配信（全員）
   async function sendBroadcast() {
+    if (!testDone) {
+      alert("先にテスト配信を行ってください");
+      return;
+    }
     setSending(true);
     setResult(null);
     try {
@@ -88,6 +123,7 @@ export default function BroadcastPage() {
         setShowConfirm(false);
         setTitle("");
         setMessage("");
+        setTestDone(false);
         // 履歴をリロード
         const listRes = await fetch("/api/broadcast");
         const listData = await listRes.json();
@@ -169,7 +205,7 @@ export default function BroadcastPage() {
       {showConfirm && (
         <Card className="border-[#06C755] border-2">
           <CardContent className="pt-6">
-            <h3 className="font-bold text-lg mb-4">配信内容の最終確認</h3>
+            <h3 className="font-bold text-lg mb-4">配信内容の確認</h3>
             <div className="space-y-3 mb-6">
               <div>
                 <span className="text-sm text-muted-foreground">対象:</span>
@@ -188,25 +224,46 @@ export default function BroadcastPage() {
                 </div>
               </div>
             </div>
+
+            {/* テスト結果表示 */}
+            {result && (
+              <div className={`rounded-md px-4 py-3 text-sm mb-4 ${result.startsWith("✅") ? "bg-green-50 text-green-800 border border-green-200" : result.startsWith("❌") ? "bg-red-50 text-red-800 border border-red-200" : "bg-muted"}`}>
+                {result}
+              </div>
+            )}
+
             <div className="flex gap-3">
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={() => setShowConfirm(false)}
+                onClick={() => { setShowConfirm(false); setTestDone(false); setResult(null); }}
               >
                 戻って編集
               </Button>
               <Button
-                className="flex-1 bg-[#06C755] hover:bg-[#05b34c]"
+                variant="outline"
+                className="flex-1 border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
                 disabled={sending}
-                onClick={sendBroadcast}
+                onClick={sendTestBroadcast}
               >
-                {sending ? (
+                {sending && !testDone ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
                   <Send className="h-4 w-4 mr-2" />
                 )}
-                この内容で配信する
+                テスト配信（堀優介のみ）
+              </Button>
+              <Button
+                className={`flex-1 ${testDone ? "bg-[#06C755] hover:bg-[#05b34c]" : "bg-gray-300 cursor-not-allowed"}`}
+                disabled={sending || !testDone}
+                onClick={sendBroadcast}
+              >
+                {sending && testDone ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4 mr-2" />
+                )}
+                {testDone ? "全員に配信する" : "先にテスト配信してください"}
               </Button>
             </div>
           </CardContent>

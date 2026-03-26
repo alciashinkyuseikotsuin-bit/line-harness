@@ -23,6 +23,7 @@ export default function SegmentPage() {
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [testDone, setTestDone] = useState(false);
 
   useEffect(() => {
     // 全友だちを取得してタグ別カウントを集計
@@ -68,7 +69,41 @@ export default function SegmentPage() {
     );
   }
 
+  // テスト配信（堀優介のみ）
+  async function sendTestSegment() {
+    setSending(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `[テスト] ${title || `セグメント配信（${selectedTags.join(", ")}）`}`,
+          message,
+          targetType: "segment",
+          targetTags: ["テスト配信"],
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult(`✅ テスト配信完了: ${data.deliveredCount}人に送信しました（テスト配信タグの友だちのみ）`);
+        setTestDone(true);
+      } else {
+        setResult(`❌ エラー: ${data.error}`);
+      }
+    } catch {
+      setResult("❌ テスト配信に失敗しました");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // 本配信
   async function sendSegment() {
+    if (!testDone) {
+      alert("先にテスト配信を行ってください");
+      return;
+    }
     setSending(true);
     setResult(null);
     try {
@@ -89,6 +124,7 @@ export default function SegmentPage() {
         setMessage("");
         setSelectedTags([]);
         setShowConfirm(false);
+        setTestDone(false);
       } else {
         setResult(`エラー: ${data.error}`);
       }
@@ -218,32 +254,52 @@ export default function SegmentPage() {
                 </div>
               </div>
             </div>
+            {/* テスト結果表示 */}
+            {result && (
+              <div className={`rounded-md px-4 py-3 text-sm mb-4 ${result.startsWith("✅") ? "bg-green-50 text-green-800 border border-green-200" : result.startsWith("❌") ? "bg-red-50 text-red-800 border border-red-200" : "bg-muted"}`}>
+                {result}
+              </div>
+            )}
+
             <div className="flex gap-3">
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={() => setShowConfirm(false)}
+                onClick={() => { setShowConfirm(false); setTestDone(false); setResult(null); }}
               >
                 戻る
               </Button>
               <Button
-                className="flex-1 bg-[#06C755] hover:bg-[#05b34c]"
+                variant="outline"
+                className="flex-1 border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
                 disabled={sending}
-                onClick={sendSegment}
+                onClick={sendTestSegment}
               >
-                {sending ? (
+                {sending && !testDone ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
                   <Send className="h-4 w-4 mr-2" />
                 )}
-                この内容で配信する
+                テスト配信（堀優介のみ）
+              </Button>
+              <Button
+                className={`flex-1 ${testDone ? "bg-[#06C755] hover:bg-[#05b34c]" : "bg-gray-300 cursor-not-allowed"}`}
+                disabled={sending || !testDone}
+                onClick={sendSegment}
+              >
+                {sending && testDone ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4 mr-2" />
+                )}
+                {testDone ? "この内容で配信する" : "先にテスト配信してください"}
               </Button>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {result && (
+      {result && !showConfirm && (
         <div className="rounded-md bg-muted px-4 py-3 text-sm">{result}</div>
       )}
     </div>
