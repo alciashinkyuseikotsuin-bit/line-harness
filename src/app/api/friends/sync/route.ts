@@ -13,10 +13,7 @@ export async function POST() {
     let continuationToken: string | undefined;
 
     do {
-      const res = await client.getFollowers({
-        start: continuationToken,
-        limit: 1000,
-      });
+      const res = await client.getFollowers(continuationToken, 1000);
       allUserIds.push(...(res.userIds || []));
       continuationToken = res.next || undefined;
     } while (continuationToken);
