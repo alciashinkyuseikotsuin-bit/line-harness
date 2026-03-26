@@ -13,7 +13,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Search, RefreshCw, Loader2 } from "lucide-react";
 
 type Friend = {
   id: string;
@@ -30,8 +31,11 @@ export default function UsersPage() {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
-  useEffect(() => {
+  function loadFriends() {
+    setLoading(true);
     const params = new URLSearchParams();
     if (search) params.set("search", search);
     fetch(`/api/friends?${params}`)
@@ -39,16 +43,61 @@ export default function UsersPage() {
       .then((d) => setFriends(d.friends || []))
       .catch(console.error)
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadFriends();
   }, [search]);
+
+  async function syncFriends() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch("/api/friends/sync", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setSyncResult(
+          `同期完了: ${data.synced}人を同期しました（全${data.total}人）`
+        );
+        loadFriends();
+      } else {
+        setSyncResult(`エラー: ${data.error}`);
+      }
+    } catch {
+      setSyncResult("同期に失敗しました");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">友だち一覧</h1>
-        <span className="text-sm text-muted-foreground">
-          全 {friends.length} 人
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted-foreground">
+            全 {friends.length} 人
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={syncFriends}
+            disabled={syncing}
+          >
+            {syncing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            LINEから同期
+          </Button>
+        </div>
       </div>
+      {syncResult && (
+        <div className="rounded-md bg-muted px-4 py-2 text-sm">
+          {syncResult}
+        </div>
+      )}
 
       <Card>
         <CardHeader>
