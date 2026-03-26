@@ -1,73 +1,42 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { getLineClient, getUserProfile } from "@/lib/line";
+import { getUserProfile } from "@/lib/line";
 
 // LINE APIからフォロワー一覧を取得してDBに同期
+// ※ getFollowers APIが403の場合はDBの既存友だちのプロフィールを更新
 export async function POST() {
   const supabase = getSupabaseAdmin();
-  const client = getLineClient();
 
   try {
-    // フォロワーIDを全件取得（ページネーション対応）
-    const allUserIds: string[] = [];
-    let continuationToken: string | undefined;
+    // DBに登録済みの友だちのプロフィールを最新に更新
+    const { data: friends } = await supabase
+      .from("friends")
+      .select("id, line_user_id")
+      .eq("is_blocked", false);
 
-    do {
-      const res = await client.getFollowers(continuationToken, 1000);
-      allUserIds.push(...(res.userIds || []));
-      continuationToken = res.next || undefined;
-    } while (continuationToken);
-
-    // 各ユーザーのプロフィールを取得してDBに保存
     let synced = 0;
     let failed = 0;
 
-    for (const userId of allUserIds) {
+    for (const friend of friends || []) {
       try {
-        // 既にDBにいるかチェック
-        const { data: existing } = await supabase
+        const profile = await getUserProfile(friend.line_user_id);
+        await supabase
           .from("friends")
-          .select("id")
-          .eq("line_user_id", userId)
-          .single();
-
-        if (existing) {
-          // 既存ユーザーはプロフィール更新のみ
-          const profile = await getUserProfile(userId);
-          await supabase
-            .from("friends")
-            .update({
-              display_name: profile.displayName,
-              picture_url: profile.pictureUrl || null,
-              status_message: profile.statusMessage || null,
-              is_blocked: false,
-              last_active_at: new Date().toISOString(),
-            })
-            .eq("line_user_id", userId);
-          synced++;
-        } else {
-          // 新規ユーザーを追加
-          const profile = await getUserProfile(userId);
-          await supabase.from("friends").insert({
-            line_user_id: userId,
+          .update({
             display_name: profile.displayName,
             picture_url: profile.pictureUrl || null,
             status_message: profile.statusMessage || null,
-            is_blocked: false,
-            joined_at: new Date().toISOString(),
             last_active_at: new Date().toISOString(),
-            tags: [],
-          });
-          synced++;
-        }
-      } catch (err) {
-        // プロフィール取得失敗（ブロック済みユーザー等）
+          })
+          .eq("id", friend.id);
+        synced++;
+      } catch {
         failed++;
       }
     }
 
     return NextResponse.json({
-      total: allUserIds.length,
+      total: (friends || []).length,
       synced,
       failed,
     });
