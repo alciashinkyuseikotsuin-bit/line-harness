@@ -43,7 +43,7 @@ const TEMPLATES: Record<string, { title: string; description: string; questions:
     questions: [
       {
         id: "q_revenue",
-        text: "現在の月商（目標売上）を教えてください",
+        text: "目標の売上を教えてください",
         type: "single",
         choices: [
           { id: "c_50", text: "〜50万", tag: "50万", broadcastMessage: "", isFreeInput: false },
@@ -543,11 +543,11 @@ export default function SurveyCreatePage() {
           variant="outline"
           className="border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
           onClick={sendTest}
-          disabled={saving || sending}
+          disabled={saving || sending || !!savedSurveyId}
         >
           {sending && !showAllConfirm && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           <Send className="h-4 w-4 mr-2" />
-          テスト配信（堀優介のみ）
+          {savedSurveyId ? "テスト配信済み ✓" : "テスト配信（堀優介のみ）"}
         </Button>
         <Button
           className="bg-[#06C755] hover:bg-[#05b34c]"

@@ -48,6 +48,20 @@ export async function POST(
     );
   }
 
+  // 重複送信チェック
+  if (mode === "test" && survey.status === "test_sent") {
+    return NextResponse.json(
+      { error: "このアンケートは既にテスト配信済みです。全員に配信するか、新しいアンケートを作成してください。" },
+      { status: 400 }
+    );
+  }
+  if (mode === "all" && survey.status === "active") {
+    return NextResponse.json(
+      { error: "このアンケートは既に配信済みです。" },
+      { status: 400 }
+    );
+  }
+
   // 配信対象を取得
   let friendsQuery = supabase
     .from("friends")
@@ -105,8 +119,13 @@ export async function POST(
     }
   }
 
-  // テスト配信の場合はステータスを変えない（下書きのまま）
-  if (mode === "all") {
+  // ステータスを更新して重複送信を防止
+  if (mode === "test") {
+    await supabase
+      .from("surveys")
+      .update({ status: "test_sent", updated_at: new Date().toISOString() })
+      .eq("id", id);
+  } else if (mode === "all") {
     await supabase
       .from("surveys")
       .update({ status: "active", updated_at: new Date().toISOString() })
