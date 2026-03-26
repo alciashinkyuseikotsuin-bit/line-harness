@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Search, Upload, FileUp, X, Loader2, Download } from "lucide-react";
+import { Search, Upload, FileUp, X, Loader2, Download, Plus, Tag } from "lucide-react";
 
 type Friend = {
   id: string;
@@ -36,6 +36,8 @@ export default function UsersPage() {
   const [importResult, setImportResult] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [tagInput, setTagInput] = useState<Record<string, string>>({});
+  const [showTagInput, setShowTagInput] = useState<string | null>(null);
 
   function loadFriends() {
     const params = new URLSearchParams();
@@ -47,16 +49,36 @@ export default function UsersPage() {
       .finally(() => setLoading(false));
   }
 
-  // 初回: 友だち一覧を即表示（syncはバックグラウンド）
   useEffect(() => {
     loadFriends();
     fetch("/api/friends/sync", { method: "POST" }).catch(() => {});
   }, []);
 
-  // 検索時: 友だち一覧を再取得
   useEffect(() => {
     if (!loading) loadFriends();
   }, [search]);
+
+  async function addTag(friendId: string) {
+    const tag = tagInput[friendId]?.trim();
+    if (!tag) return;
+    await fetch(`/api/friends/${friendId}/tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tag }),
+    });
+    setTagInput((prev) => ({ ...prev, [friendId]: "" }));
+    setShowTagInput(null);
+    loadFriends();
+  }
+
+  async function removeTag(friendId: string, tag: string) {
+    await fetch(`/api/friends/${friendId}/tags`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tag }),
+    });
+    loadFriends();
+  }
 
   const handleImport = useCallback(async (file: File) => {
     if (!file.name.endsWith(".csv")) {
@@ -235,7 +257,7 @@ export default function UsersPage() {
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              LINEから友だち情報を取得中...
+              読み込み中...
             </p>
           ) : friends.length === 0 ? (
             <div className="text-center py-8">
@@ -300,12 +322,54 @@ export default function UsersPage() {
                         : "-"}
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-1 flex-wrap">
+                      <div className="flex gap-1 flex-wrap items-center">
                         {(user.tags || []).map((tag) => (
-                          <Badge key={tag} variant="outline" className="text-xs">
+                          <Badge
+                            key={tag}
+                            variant="outline"
+                            className="text-xs group cursor-pointer hover:bg-red-50 hover:border-red-300"
+                            onClick={() => removeTag(user.id, tag)}
+                          >
+                            <Tag className="h-3 w-3 mr-1" />
                             {tag}
+                            <X className="h-3 w-3 ml-1 opacity-0 group-hover:opacity-100 text-red-500" />
                           </Badge>
                         ))}
+                        {showTagInput === user.id ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              className="h-6 w-24 text-xs"
+                              placeholder="タグ名"
+                              value={tagInput[user.id] || ""}
+                              onChange={(e) =>
+                                setTagInput((prev) => ({
+                                  ...prev,
+                                  [user.id]: e.target.value,
+                                }))
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") addTag(user.id);
+                                if (e.key === "Escape") setShowTagInput(null);
+                              }}
+                              autoFocus
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0"
+                              onClick={() => addTag(user.id)}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <button
+                            className="rounded border border-dashed border-muted-foreground/30 px-1.5 py-0.5 text-xs text-muted-foreground hover:border-[#06C755] hover:text-[#06C755]"
+                            onClick={() => setShowTagInput(user.id)}
+                          >
+                            + タグ
+                          </button>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>
