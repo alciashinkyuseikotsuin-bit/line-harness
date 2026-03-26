@@ -47,11 +47,10 @@ export default function UsersPage() {
       .finally(() => setLoading(false));
   }
 
-  // 初回: LINE APIから同期 → 友だち一覧を取得
+  // 初回: 友だち一覧を即表示（syncはバックグラウンド）
   useEffect(() => {
-    fetch("/api/friends/sync", { method: "POST" })
-      .catch(() => {})
-      .finally(() => loadFriends());
+    loadFriends();
+    fetch("/api/friends/sync", { method: "POST" }).catch(() => {});
   }, []);
 
   // 検索時: 友だち一覧を再取得
