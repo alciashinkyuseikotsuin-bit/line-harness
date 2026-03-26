@@ -125,12 +125,59 @@ export async function POST(request: NextRequest) {
                     .eq("id", friend.id);
                 }
 
-                // 自動配信メッセージがあれば送信
-                if (choice.broadcast_message) {
-                  await pushMessage(
-                    event.source.userId,
-                    choice.broadcast_message
-                  );
+                // 自由記入チェック（isFreeInput フラグ）
+                if (choice.broadcast_message && choice.tag.includes("その他")) {
+                  // 「その他」選択 → 自由記入待ち状態にする
+                  await supabase
+                    .from("friends")
+                    .update({
+                      pending_input: {
+                        type: "free_tag",
+                        base_tag: choice.tag.replace(":その他", ""),
+                        prompt: choice.broadcast_message,
+                      },
+                    })
+                    .eq("id", friend.id);
+                  await pushMessage(pbUserId, choice.broadcast_message);
+                } else if (choice.broadcast_message) {
+                  // 通常の自動返信
+                  await pushMessage(pbUserId, choice.broadcast_message);
+                }
+
+                // ステップフローのトリガーチェック
+                const { data: flows } = await supabase
+                  .from("step_flows")
+                  .select("id")
+                  .eq("trigger_tag", choice.tag)
+                  .eq("status", "active");
+
+                if (flows && flows.length > 0) {
+                  for (const flow of flows) {
+                    const { data: firstStep } = await supabase
+                      .from("step_messages")
+                      .select("delay_minutes")
+                      .eq("flow_id", flow.id)
+                      .order("sort_order", { ascending: true })
+                      .limit(1)
+                      .single();
+
+                    const nextSendAt = new Date();
+                    if (firstStep) {
+                      nextSendAt.setMinutes(nextSendAt.getMinutes() + firstStep.delay_minutes);
+                    }
+
+                    await supabase.from("step_enrollments").upsert(
+                      {
+                        flow_id: flow.id,
+                        friend_id: friend.id,
+                        current_step: 0,
+                        status: "active",
+                        enrolled_at: new Date().toISOString(),
+                        next_send_at: nextSendAt.toISOString(),
+                      },
+                      { onConflict: "flow_id,friend_id" }
+                    );
+                  }
                 }
               }
             }
@@ -139,21 +186,50 @@ export async function POST(request: NextRequest) {
         }
 
         case "message": {
-          // メッセージ受信時：友だち未登録なら登録＋最終アクティブ更新
+          // メッセージ受信時
           const userId = event.source.userId;
           if (userId) {
             const { data: existing } = await supabase
               .from("friends")
-              .select("id")
+              .select("id, tags, pending_input")
               .eq("line_user_id", userId)
               .single();
 
             if (existing) {
-              // 既存：最終アクティブ更新
-              await supabase
-                .from("friends")
-                .update({ last_active_at: new Date().toISOString() })
-                .eq("line_user_id", userId);
+              // 自由記入待ち状態のチェック
+              if (
+                existing.pending_input &&
+                (existing.pending_input as any).type === "free_tag" &&
+                event.message?.type === "text" &&
+                event.message?.text
+              ) {
+                const inputText = event.message.text.trim();
+                const baseTag = (existing.pending_input as any).base_tag || "業種";
+                const newTag = `${baseTag}:${inputText}`;
+                const currentTags: string[] = existing.tags || [];
+
+                // 「その他」タグを削除して、入力された業種タグに置き換え
+                const updatedTags = currentTags
+                  .filter((t: string) => !t.includes("その他"))
+                  .concat(newTag);
+
+                await supabase
+                  .from("friends")
+                  .update({
+                    tags: updatedTags,
+                    pending_input: null,
+                    last_active_at: new Date().toISOString(),
+                  })
+                  .eq("id", existing.id);
+
+                await pushMessage(userId, `「${inputText}」で登録しました！ありがとうございます。`);
+              } else {
+                // 通常：最終アクティブ更新 + pending_inputクリア不要
+                await supabase
+                  .from("friends")
+                  .update({ last_active_at: new Date().toISOString() })
+                  .eq("line_user_id", userId);
+              }
             } else {
               // 未登録：プロフィール取得して新規登録
               const msgProfile = await getUserProfile(userId);
