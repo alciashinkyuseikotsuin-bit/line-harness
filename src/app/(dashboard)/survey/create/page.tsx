@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,7 @@ import {
   ArrowLeft,
   Send,
   Tag,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -31,38 +33,23 @@ type Question = {
   choices: Choice[];
 };
 
-const initialQuestions: Question[] = [
-  {
-    id: "q1",
-    text: "どのメニューに興味がありますか？",
-    type: "single",
-    choices: [
-      {
-        id: "c1",
-        text: "カット",
-        tag: "カット希望",
-        broadcastMessage: "カットメニューのご案内をお送りします",
-      },
-      {
-        id: "c2",
-        text: "カラー",
-        tag: "カラー希望",
-        broadcastMessage: "カラーメニューのご案内をお送りします",
-      },
-      {
-        id: "c3",
-        text: "トリートメント",
-        tag: "トリートメント希望",
-        broadcastMessage: "トリートメントメニューのご案内をお送りします",
-      },
-    ],
-  },
-];
-
 export default function SurveyCreatePage() {
-  const [title, setTitle] = useState("新規アンケート");
+  const router = useRouter();
+  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [questions, setQuestions] = useState<Question[]>(initialQuestions);
+  const [questions, setQuestions] = useState<Question[]>([
+    {
+      id: "q1",
+      text: "",
+      type: "single",
+      choices: [
+        { id: "c1a", text: "", tag: "", broadcastMessage: "" },
+        { id: "c1b", text: "", tag: "", broadcastMessage: "" },
+      ],
+    },
+  ]);
+  const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
 
   function addQuestion() {
     const newId = `q${Date.now()}`;
@@ -73,18 +60,8 @@ export default function SurveyCreatePage() {
         text: "",
         type: "single",
         choices: [
-          {
-            id: `c${Date.now()}a`,
-            text: "",
-            tag: "",
-            broadcastMessage: "",
-          },
-          {
-            id: `c${Date.now()}b`,
-            text: "",
-            tag: "",
-            broadcastMessage: "",
-          },
+          { id: `c${Date.now()}a`, text: "", tag: "", broadcastMessage: "" },
+          { id: `c${Date.now()}b`, text: "", tag: "", broadcastMessage: "" },
         ],
       },
     ]);
@@ -126,9 +103,7 @@ export default function SurveyCreatePage() {
   }
 
   function updateQuestion(qId: string, text: string) {
-    setQuestions(
-      questions.map((q) => (q.id === qId ? { ...q, text } : q))
-    );
+    setQuestions(questions.map((q) => (q.id === qId ? { ...q, text } : q)));
   }
 
   function updateChoice(
@@ -149,6 +124,51 @@ export default function SurveyCreatePage() {
           : q
       )
     );
+  }
+
+  async function saveSurvey(andSend: boolean) {
+    if (!title.trim()) {
+      alert("アンケート名を入力してください");
+      return;
+    }
+    if (questions.some((q) => !q.text.trim())) {
+      alert("質問文を入力してください");
+      return;
+    }
+
+    andSend ? setSending(true) : setSaving(true);
+
+    try {
+      const res = await fetch("/api/surveys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, description, questions }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "保存に失敗しました");
+        return;
+      }
+
+      if (andSend && data.survey?.id) {
+        const sendRes = await fetch(`/api/surveys/${data.survey.id}/send`, {
+          method: "POST",
+        });
+        if (!sendRes.ok) {
+          const sendData = await sendRes.json();
+          alert(sendData.error || "LINE配信に失敗しました");
+          return;
+        }
+      }
+
+      router.push("/survey");
+    } catch (err) {
+      alert("エラーが発生しました");
+    } finally {
+      setSaving(false);
+      setSending(false);
+    }
   }
 
   return (
@@ -318,8 +338,20 @@ export default function SurveyCreatePage() {
       <Separator />
 
       <div className="flex gap-3 justify-end">
-        <Button variant="outline">下書き保存</Button>
-        <Button className="bg-[#06C755] hover:bg-[#05b34c]">
+        <Button
+          variant="outline"
+          onClick={() => saveSurvey(false)}
+          disabled={saving || sending}
+        >
+          {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          下書き保存
+        </Button>
+        <Button
+          className="bg-[#06C755] hover:bg-[#05b34c]"
+          onClick={() => saveSurvey(true)}
+          disabled={saving || sending}
+        >
+          {sending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           <Send className="h-4 w-4 mr-2" />
           LINE で配信する
         </Button>

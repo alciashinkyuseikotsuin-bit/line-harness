@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,58 +14,16 @@ import {
 } from "@/components/ui/table";
 import { Plus, Send } from "lucide-react";
 
-const broadcasts = [
-  {
-    id: 1,
-    title: "3月キャンペーン告知",
-    date: "2026-03-25 10:00",
-    target: "全友だち",
-    delivered: 1248,
-    opens: "72.1%",
-    clicks: "18.3%",
-    status: "sent",
-  },
-  {
-    id: 2,
-    title: "新メニュー紹介",
-    date: "2026-03-20 12:00",
-    target: "全友だち",
-    delivered: 1230,
-    opens: "65.8%",
-    clicks: "12.7%",
-    status: "sent",
-  },
-  {
-    id: 3,
-    title: "リマインド配信",
-    date: "2026-03-15 18:00",
-    target: "全友だち",
-    delivered: 1215,
-    opens: "58.2%",
-    clicks: "9.4%",
-    status: "sent",
-  },
-  {
-    id: 4,
-    title: "4月予約受付開始",
-    date: "2026-03-28 10:00",
-    target: "全友だち",
-    delivered: 0,
-    opens: "-",
-    clicks: "-",
-    status: "scheduled",
-  },
-  {
-    id: 5,
-    title: "春の新生活応援",
-    date: "2026-04-01 09:00",
-    target: "全友だち",
-    delivered: 0,
-    opens: "-",
-    clicks: "-",
-    status: "draft",
-  },
-];
+type Broadcast = {
+  id: string;
+  title: string;
+  message_text: string;
+  target_type: string;
+  status: string;
+  sent_at: string | null;
+  delivered_count: number;
+  created_at: string;
+};
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -78,13 +37,30 @@ function StatusBadge({ status }: { status: string }) {
     draft: "下書き",
   };
   return (
-    <Badge variant="secondary" className={styles[status]}>
-      {labels[status]}
+    <Badge variant="secondary" className={styles[status] || styles.draft}>
+      {labels[status] || status}
     </Badge>
   );
 }
 
 export default function BroadcastPage() {
+  const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/broadcast")
+      .then((r) => r.json())
+      .then((d) => setBroadcasts(d.broadcasts || []))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const sentBroadcasts = broadcasts.filter((b) => b.status === "sent");
+  const totalDelivered = sentBroadcasts.reduce(
+    (s, b) => s + (b.delivered_count || 0),
+    0
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -99,72 +75,95 @@ export default function BroadcastPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              今月の配信数
+              配信数
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">3</div>
+            <div className="text-2xl font-bold">{sentBroadcasts.length}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              平均開封率
+              総配信メッセージ数
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">65.4%</div>
+            <div className="text-2xl font-bold">
+              {totalDelivered.toLocaleString()}
+            </div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              平均クリック率
+              全配信履歴
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">13.5%</div>
+            <div className="text-2xl font-bold">{broadcasts.length}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardContent className="pt-6">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>タイトル</TableHead>
-                <TableHead>配信日時</TableHead>
-                <TableHead>対象</TableHead>
-                <TableHead>配信数</TableHead>
-                <TableHead>開封率</TableHead>
-                <TableHead>クリック率</TableHead>
-                <TableHead>ステータス</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {broadcasts.map((b) => (
-                <TableRow key={b.id} className="cursor-pointer hover:bg-muted/50">
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Send className="h-4 w-4 text-muted-foreground" />
-                      <span className="font-medium">{b.title}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm">{b.date}</TableCell>
-                  <TableCell className="text-sm">{b.target}</TableCell>
-                  <TableCell className="text-sm">
-                    {b.delivered > 0 ? b.delivered.toLocaleString() : "-"}
-                  </TableCell>
-                  <TableCell className="text-sm">{b.opens}</TableCell>
-                  <TableCell className="text-sm">{b.clicks}</TableCell>
-                  <TableCell>
-                    <StatusBadge status={b.status} />
-                  </TableCell>
+          {loading ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              読み込み中...
+            </p>
+          ) : broadcasts.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              配信履歴がありません
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>タイトル</TableHead>
+                  <TableHead>配信日時</TableHead>
+                  <TableHead>対象</TableHead>
+                  <TableHead>配信数</TableHead>
+                  <TableHead>ステータス</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {broadcasts.map((b) => (
+                  <TableRow
+                    key={b.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Send className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium">{b.title}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {b.sent_at
+                        ? new Date(b.sent_at).toLocaleString("ja-JP")
+                        : "-"}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {b.target_type === "all"
+                        ? "全友だち"
+                        : b.target_type === "segment"
+                          ? "セグメント"
+                          : b.target_type}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {b.delivered_count > 0
+                        ? b.delivered_count.toLocaleString()
+                        : "-"}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={b.status} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
