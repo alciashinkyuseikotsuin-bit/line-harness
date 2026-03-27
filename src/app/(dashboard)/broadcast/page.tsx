@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Plus, Send, X, Loader2 } from "lucide-react";
+import { LinePreview } from "@/components/line-preview";
 
 type Broadcast = {
   id: string;
@@ -159,115 +160,121 @@ export default function BroadcastPage() {
 
       {/* 新規配信フォーム */}
       {showCreate && !showConfirm && (
-        <Card className="border-[#06C755]">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold">新規一斉配信</h3>
-              <button onClick={() => setShowCreate(false)}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium mb-1 block">タイトル（管理用）</label>
-                <Input
-                  placeholder="配信のタイトル"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
+        <div className="grid gap-6 lg:grid-cols-[1fr_auto]">
+          <Card className="border-[#06C755]">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold">新規一斉配信</h3>
+                <button onClick={() => setShowCreate(false)}>
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">メッセージ本文</label>
-                <Textarea
-                  placeholder="全友だちに配信するメッセージを入力..."
-                  rows={6}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                />
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">タイトル（管理用）</label>
+                  <Input
+                    placeholder="配信のタイトル"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">メッセージ本文</label>
+                  <Textarea
+                    placeholder="全友だちに配信するメッセージを入力..."
+                    rows={6}
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                  />
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  配信対象: 全友だち（{friendCount}人）
+                </div>
+                <Button
+                  className="w-full bg-[#06C755] hover:bg-[#05b34c]"
+                  disabled={!message.trim()}
+                  onClick={() => setShowConfirm(true)}
+                >
+                  <Send className="h-4 w-4 mr-2" />
+                  配信内容を確認
+                </Button>
               </div>
-              <div className="text-sm text-muted-foreground">
-                配信対象: 全友だち（{friendCount}人）
-              </div>
-              <Button
-                className="w-full bg-[#06C755] hover:bg-[#05b34c]"
-                disabled={!message.trim()}
-                onClick={() => setShowConfirm(true)}
-              >
-                <Send className="h-4 w-4 mr-2" />
-                配信内容を確認
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+          <LinePreview messages={[message]} />
+        </div>
       )}
 
       {/* 確認ダイアログ */}
       {showConfirm && (
-        <Card className="border-[#06C755] border-2">
-          <CardContent className="pt-6">
-            <h3 className="font-bold text-lg mb-4">配信内容の確認</h3>
-            <div className="space-y-3 mb-6">
-              <div>
-                <span className="text-sm text-muted-foreground">対象:</span>
-                <span className="ml-2 font-medium">全友だち（{friendCount}人）</span>
-              </div>
-              {title && (
+        <div className="grid gap-6 lg:grid-cols-[1fr_auto]">
+          <Card className="border-[#06C755] border-2">
+            <CardContent className="pt-6">
+              <h3 className="font-bold text-lg mb-4">配信内容の確認</h3>
+              <div className="space-y-3 mb-6">
                 <div>
-                  <span className="text-sm text-muted-foreground">タイトル:</span>
-                  <span className="ml-2">{title}</span>
+                  <span className="text-sm text-muted-foreground">対象:</span>
+                  <span className="ml-2 font-medium">全友だち（{friendCount}人）</span>
+                </div>
+                {title && (
+                  <div>
+                    <span className="text-sm text-muted-foreground">タイトル:</span>
+                    <span className="ml-2">{title}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="text-sm text-muted-foreground">メッセージ:</span>
+                  <div className="mt-1 rounded-md bg-muted p-4 text-sm whitespace-pre-wrap">
+                    {message}
+                  </div>
+                </div>
+              </div>
+
+              {/* テスト結果表示 */}
+              {result && (
+                <div className={`rounded-md px-4 py-3 text-sm mb-4 ${result.startsWith("✅") ? "bg-green-50 text-green-800 border border-green-200" : result.startsWith("❌") ? "bg-red-50 text-red-800 border border-red-200" : "bg-muted"}`}>
+                  {result}
                 </div>
               )}
-              <div>
-                <span className="text-sm text-muted-foreground">メッセージ:</span>
-                <div className="mt-1 rounded-md bg-muted p-4 text-sm whitespace-pre-wrap">
-                  {message}
-                </div>
-              </div>
-            </div>
 
-            {/* テスト結果表示 */}
-            {result && (
-              <div className={`rounded-md px-4 py-3 text-sm mb-4 ${result.startsWith("✅") ? "bg-green-50 text-green-800 border border-green-200" : result.startsWith("❌") ? "bg-red-50 text-red-800 border border-red-200" : "bg-muted"}`}>
-                {result}
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => { setShowConfirm(false); setTestDone(false); setResult(null); }}
+                >
+                  戻って編集
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
+                  disabled={sending}
+                  onClick={sendTestBroadcast}
+                >
+                  {sending && !testDone ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  テスト配信（堀優介のみ）
+                </Button>
+                <Button
+                  className={`flex-1 ${testDone ? "bg-[#06C755] hover:bg-[#05b34c]" : "bg-gray-300 cursor-not-allowed"}`}
+                  disabled={sending || !testDone}
+                  onClick={sendBroadcast}
+                >
+                  {sending && testDone ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  {testDone ? "全員に配信する" : "先にテスト配信してください"}
+                </Button>
               </div>
-            )}
-
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => { setShowConfirm(false); setTestDone(false); setResult(null); }}
-              >
-                戻って編集
-              </Button>
-              <Button
-                variant="outline"
-                className="flex-1 border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
-                disabled={sending}
-                onClick={sendTestBroadcast}
-              >
-                {sending && !testDone ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4 mr-2" />
-                )}
-                テスト配信（堀優介のみ）
-              </Button>
-              <Button
-                className={`flex-1 ${testDone ? "bg-[#06C755] hover:bg-[#05b34c]" : "bg-gray-300 cursor-not-allowed"}`}
-                disabled={sending || !testDone}
-                onClick={sendBroadcast}
-              >
-                {sending && testDone ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4 mr-2" />
-                )}
-                {testDone ? "全員に配信する" : "先にテスト配信してください"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+          <LinePreview messages={[message]} />
+        </div>
       )}
 
       {result && (

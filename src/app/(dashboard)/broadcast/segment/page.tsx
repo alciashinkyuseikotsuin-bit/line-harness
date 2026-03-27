@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Users, Tag, Send, X, Loader2 } from "lucide-react";
+import { LinePreview } from "@/components/line-preview";
 
 type TagInfo = {
   name: string;
@@ -139,7 +140,7 @@ export default function SegmentPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">セグメント配信</h1>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-[1fr_1fr_auto]">
         {/* タグ選択 */}
         <Card>
           <CardHeader>
@@ -220,83 +221,89 @@ export default function SegmentPage() {
             </Button>
           </CardContent>
         </Card>
+
+        {/* プレビュー */}
+        <LinePreview messages={[message]} />
       </div>
 
       {/* 確認ダイアログ */}
       {showConfirm && (
-        <Card className="border-[#06C755]">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-lg">配信内容の確認</h3>
-              <button onClick={() => setShowConfirm(false)}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-3 mb-6">
-              <div>
-                <span className="text-sm text-muted-foreground">対象タグ:</span>
-                <div className="flex gap-1 mt-1">
-                  {selectedTags.map((t) => (
-                    <Badge key={t} variant="outline">
-                      {t}
-                    </Badge>
-                  ))}
+        <div className="grid gap-6 lg:grid-cols-[1fr_auto]">
+          <Card className="border-[#06C755]">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-lg">配信内容の確認</h3>
+                <button onClick={() => setShowConfirm(false)}>
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="space-y-3 mb-6">
+                <div>
+                  <span className="text-sm text-muted-foreground">対象タグ:</span>
+                  <div className="flex gap-1 mt-1">
+                    {selectedTags.map((t) => (
+                      <Badge key={t} variant="outline">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-sm text-muted-foreground">配信人数:</span>
+                  <span className="ml-2 font-medium">{matchCount}人</span>
+                </div>
+                <div>
+                  <span className="text-sm text-muted-foreground">メッセージ:</span>
+                  <div className="mt-1 rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">
+                    {message}
+                  </div>
                 </div>
               </div>
-              <div>
-                <span className="text-sm text-muted-foreground">配信人数:</span>
-                <span className="ml-2 font-medium">{matchCount}人</span>
-              </div>
-              <div>
-                <span className="text-sm text-muted-foreground">メッセージ:</span>
-                <div className="mt-1 rounded-md bg-muted p-3 text-sm whitespace-pre-wrap">
-                  {message}
+              {/* テスト結果表示 */}
+              {result && (
+                <div className={`rounded-md px-4 py-3 text-sm mb-4 ${result.startsWith("✅") ? "bg-green-50 text-green-800 border border-green-200" : result.startsWith("❌") ? "bg-red-50 text-red-800 border border-red-200" : "bg-muted"}`}>
+                  {result}
                 </div>
-              </div>
-            </div>
-            {/* テスト結果表示 */}
-            {result && (
-              <div className={`rounded-md px-4 py-3 text-sm mb-4 ${result.startsWith("✅") ? "bg-green-50 text-green-800 border border-green-200" : result.startsWith("❌") ? "bg-red-50 text-red-800 border border-red-200" : "bg-muted"}`}>
-                {result}
-              </div>
-            )}
+              )}
 
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={() => { setShowConfirm(false); setTestDone(false); setResult(null); }}
-              >
-                戻る
-              </Button>
-              <Button
-                variant="outline"
-                className="flex-1 border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
-                disabled={sending}
-                onClick={sendTestSegment}
-              >
-                {sending && !testDone ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4 mr-2" />
-                )}
-                テスト配信（堀優介のみ）
-              </Button>
-              <Button
-                className={`flex-1 ${testDone ? "bg-[#06C755] hover:bg-[#05b34c]" : "bg-gray-300 cursor-not-allowed"}`}
-                disabled={sending || !testDone}
-                onClick={sendSegment}
-              >
-                {sending && testDone ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4 mr-2" />
-                )}
-                {testDone ? "この内容で配信する" : "先にテスト配信してください"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => { setShowConfirm(false); setTestDone(false); setResult(null); }}
+                >
+                  戻る
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
+                  disabled={sending}
+                  onClick={sendTestSegment}
+                >
+                  {sending && !testDone ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  テスト配信（堀優介のみ）
+                </Button>
+                <Button
+                  className={`flex-1 ${testDone ? "bg-[#06C755] hover:bg-[#05b34c]" : "bg-gray-300 cursor-not-allowed"}`}
+                  disabled={sending || !testDone}
+                  onClick={sendSegment}
+                >
+                  {sending && testDone ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  {testDone ? "この内容で配信する" : "先にテスト配信してください"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+          <LinePreview messages={[message]} />
+        </div>
       )}
 
       {result && !showConfirm && (
