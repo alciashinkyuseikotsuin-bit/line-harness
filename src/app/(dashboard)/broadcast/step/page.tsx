@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Plus,
   ArrowRight,
@@ -17,9 +16,12 @@ import {
   Loader2,
 } from "lucide-react";
 import { LinePreview } from "@/components/line-preview";
+import { MessageBlockEditor } from "@/components/message-block-editor";
+import type { MessageBlock } from "@/types/blocks";
+import { createBlock } from "@/types/blocks";
 
 type StepMessage = {
-  message_text: string;
+  blocks: MessageBlock[];
   delay_minutes: number;
 };
 
@@ -32,6 +34,7 @@ type StepFlow = {
   step_messages: {
     id: string;
     message_text: string;
+    message_blocks: MessageBlock[] | null;
     delay_minutes: number;
     sort_order: number;
   }[];
@@ -52,10 +55,12 @@ export default function StepPage() {
   const [name, setName] = useState("");
   const [triggerTag, setTriggerTag] = useState("");
   const [steps, setSteps] = useState<StepMessage[]>([
-    { message_text: "", delay_minutes: 0 },
+    { blocks: [createBlock("text")], delay_minutes: 0 },
   ]);
   const [creating, setCreating] = useState(false);
   const [allTags, setAllTags] = useState<string[]>([]);
+  const [activeStepIndex, setActiveStepIndex] = useState(0);
+  const [surveys, setSurveys] = useState<{ id: string; title: string }[]>([]);
 
   function loadFlows() {
     fetch("/api/step-flows")
@@ -71,22 +76,45 @@ export default function StepPage() {
       .then((r) => r.json())
       .then((d) => setAllTags(d.tags || []))
       .catch(() => {});
+    fetch("/api/surveys")
+      .then((r) => r.json())
+      .then((d) =>
+        setSurveys(
+          (d.surveys || []).map((s: any) => ({ id: s.id, title: s.title }))
+        )
+      )
+      .catch(() => {});
   }, []);
 
   async function createFlow() {
-    if (!name || !triggerTag || steps.some((s) => !s.message_text.trim())) return;
+    if (!name || !triggerTag) return;
     setCreating(true);
     try {
+      // ステップデータをAPIに送信（blocksを含む）
+      const stepsData = steps.map((s) => ({
+        message_text: s.blocks
+          .filter((b) => b.type === "text" && b.text)
+          .map((b) => b.text)
+          .join("\n") || "（メディアメッセージ）",
+        message_blocks: s.blocks,
+        delay_minutes: s.delay_minutes,
+      }));
+
       const res = await fetch("/api/step-flows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, trigger_tag: triggerTag, steps }),
+        body: JSON.stringify({
+          name,
+          trigger_tag: triggerTag,
+          steps: stepsData,
+        }),
       });
       if (res.ok) {
         setShowCreate(false);
         setName("");
         setTriggerTag("");
-        setSteps([{ message_text: "", delay_minutes: 0 }]);
+        setSteps([{ blocks: [createBlock("text")], delay_minutes: 0 }]);
+        setActiveStepIndex(0);
         loadFlows();
       }
     } finally {
@@ -108,6 +136,10 @@ export default function StepPage() {
     await fetch(`/api/step-flows/${id}`, { method: "DELETE" });
     loadFlows();
   }
+
+  // プレビュー用: アクティブなステップのブロックを表示
+  const previewBlocks =
+    steps[activeStepIndex]?.blocks || [];
 
   return (
     <div className="space-y-6">
@@ -136,7 +168,9 @@ export default function StepPage() {
               <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="text-sm font-medium mb-1 block">フロー名</label>
+                    <label className="text-sm font-medium mb-1 block">
+                      フロー名
+                    </label>
                     <Input
                       placeholder="例: 新規登録ウェルカム"
                       value={name}
@@ -162,26 +196,34 @@ export default function StepPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium mb-2 block">ステップ</label>
-                  <div className="space-y-3">
+                  <label className="text-sm font-medium mb-2 block">
+                    ステップ
+                  </label>
+                  <div className="space-y-4">
                     {steps.map((step, i) => (
-                      <div key={i} className="flex gap-3 items-start">
-                        <div className="flex flex-col items-center gap-1 pt-2">
-                          <div className="rounded-full bg-[#06C755] text-white w-6 h-6 flex items-center justify-center text-xs font-bold">
-                            {i + 1}
-                          </div>
-                          {i < steps.length - 1 && (
-                            <div className="w-px h-8 bg-muted-foreground/30" />
-                          )}
-                        </div>
-                        <div className="flex-1 space-y-2">
-                          <div className="flex gap-2">
+                      <div
+                        key={i}
+                        className={`rounded-lg border-2 p-4 transition-colors cursor-pointer ${
+                          activeStepIndex === i
+                            ? "border-[#06C755] bg-[#06C755]/5"
+                            : "border-muted hover:border-[#06C755]/30"
+                        }`}
+                        onClick={() => setActiveStepIndex(i)}
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="rounded-full bg-[#06C755] text-white w-6 h-6 flex items-center justify-center text-xs font-bold">
+                              {i + 1}
+                            </div>
                             <select
                               className="rounded-md border px-2 py-1 text-sm"
                               value={step.delay_minutes}
+                              onClick={(e) => e.stopPropagation()}
                               onChange={(e) => {
                                 const newSteps = [...steps];
-                                newSteps[i].delay_minutes = Number(e.target.value);
+                                newSteps[i].delay_minutes = Number(
+                                  e.target.value
+                                );
                                 setSteps(newSteps);
                               }}
                             >
@@ -196,30 +238,45 @@ export default function StepPage() {
                               <option value={20160}>14日後</option>
                               <option value={43200}>30日後</option>
                             </select>
-                            {steps.length > 1 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-red-500"
-                                onClick={() =>
-                                  setSteps(steps.filter((_, j) => j !== i))
-                                }
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
                           </div>
-                          <Textarea
-                            placeholder="メッセージ内容"
-                            rows={2}
-                            value={step.message_text}
-                            onChange={(e) => {
-                              const newSteps = [...steps];
-                              newSteps[i].message_text = e.target.value;
-                              setSteps(newSteps);
-                            }}
-                          />
+                          {steps.length > 1 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-500"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const newSteps = steps.filter(
+                                  (_, j) => j !== i
+                                );
+                                setSteps(newSteps);
+                                if (activeStepIndex >= newSteps.length) {
+                                  setActiveStepIndex(newSteps.length - 1);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
+                        {activeStepIndex === i && (
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <MessageBlockEditor
+                              blocks={step.blocks}
+                              onChange={(newBlocks) => {
+                                const newSteps = [...steps];
+                                newSteps[i].blocks = newBlocks;
+                                setSteps(newSteps);
+                              }}
+                              surveys={surveys}
+                            />
+                          </div>
+                        )}
+                        {activeStepIndex !== i && (
+                          <p className="text-xs text-muted-foreground">
+                            {step.blocks.length}ブロック - クリックして編集
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -227,9 +284,16 @@ export default function StepPage() {
                     variant="outline"
                     size="sm"
                     className="mt-3"
-                    onClick={() =>
-                      setSteps([...steps, { message_text: "", delay_minutes: 1440 }])
-                    }
+                    onClick={() => {
+                      setSteps([
+                        ...steps,
+                        {
+                          blocks: [createBlock("text")],
+                          delay_minutes: 1440,
+                        },
+                      ]);
+                      setActiveStepIndex(steps.length);
+                    }}
                   >
                     <Plus className="h-4 w-4 mr-1" />
                     ステップ追加
@@ -249,7 +313,12 @@ export default function StepPage() {
               </div>
             </CardContent>
           </Card>
-          <LinePreview messages={steps.map((s) => s.message_text)} />
+          <div>
+            <p className="text-xs text-muted-foreground text-center mb-1">
+              ステップ {activeStepIndex + 1} のプレビュー
+            </p>
+            <LinePreview blocks={previewBlocks} />
+          </div>
         </div>
       )}
 
@@ -264,10 +333,7 @@ export default function StepPage() {
             <p className="text-sm text-muted-foreground mb-4">
               ステップフローがありません
             </p>
-            <Button
-              variant="outline"
-              onClick={() => setShowCreate(true)}
-            >
+            <Button variant="outline" onClick={() => setShowCreate(true)}>
               <Plus className="h-4 w-4 mr-2" />
               最初のフローを作成
             </Button>
@@ -316,7 +382,10 @@ export default function StepPage() {
               <CardContent>
                 <div className="flex items-center gap-2 overflow-x-auto pb-2">
                   {(flow.step_messages || []).map((step, i) => (
-                    <div key={step.id} className="flex items-center gap-2 shrink-0">
+                    <div
+                      key={step.id}
+                      className="flex items-center gap-2 shrink-0"
+                    >
                       <div className="rounded-lg border bg-muted/50 p-3 min-w-[160px]">
                         <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
                           <Clock className="h-3 w-3" />
@@ -324,7 +393,9 @@ export default function StepPage() {
                         </div>
                         <div className="flex items-center gap-1 text-sm">
                           <MessageSquare className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{step.message_text.slice(0, 30)}</span>
+                          <span className="truncate">
+                            {step.message_text.slice(0, 30)}
+                          </span>
                         </div>
                       </div>
                       {i < flow.step_messages.length - 1 && (

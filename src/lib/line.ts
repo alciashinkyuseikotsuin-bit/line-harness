@@ -1,4 +1,5 @@
-import { messagingApi, MessageAPIResponseBase } from "@line/bot-sdk";
+import { messagingApi } from "@line/bot-sdk";
+import type { MessageBlock } from "@/types/blocks";
 
 export function getLineClient() {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -12,7 +13,40 @@ export function getLineClient() {
   });
 }
 
-// 全友だちに一斉配信
+// ブロック配列をLINEメッセージ配列に変換
+export function blocksToLineMessages(blocks: MessageBlock[]): any[] {
+  return blocks
+    .filter((b) => {
+      if (b.type === "text") return b.text?.trim();
+      if (b.type === "image") return b.url;
+      if (b.type === "video") return b.url && b.previewUrl;
+      if (b.type === "survey") return b.surveyId;
+      return false;
+    })
+    .map((block) => {
+      switch (block.type) {
+        case "text":
+          return { type: "text", text: block.text };
+        case "image":
+          return {
+            type: "image",
+            originalContentUrl: block.url,
+            previewImageUrl: block.previewUrl || block.url,
+          };
+        case "video":
+          return {
+            type: "video",
+            originalContentUrl: block.url,
+            previewImageUrl: block.previewUrl,
+          };
+        default:
+          return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+// 全友だちに一斉配信（テキスト単体 - 後方互換）
 export async function broadcastMessage(text: string) {
   const client = getLineClient();
   return client.broadcast({
@@ -20,7 +54,13 @@ export async function broadcastMessage(text: string) {
   });
 }
 
-// 特定ユーザーにプッシュ送信
+// 全友だちに一斉配信（複数ブロック対応）
+export async function broadcastMessages(messages: any[]) {
+  const client = getLineClient();
+  return client.broadcast({ messages });
+}
+
+// 特定ユーザーにプッシュ送信（テキスト単体 - 後方互換）
 export async function pushMessage(userId: string, text: string) {
   const client = getLineClient();
   return client.pushMessage({
@@ -29,13 +69,32 @@ export async function pushMessage(userId: string, text: string) {
   });
 }
 
-// 複数ユーザーにマルチキャスト送信 (セグメント配信用)
+// 特定ユーザーにプッシュ送信（複数ブロック対応）
+export async function pushMessages(userId: string, messages: any[]) {
+  const client = getLineClient();
+  return client.pushMessage({
+    to: userId,
+    messages,
+  });
+}
+
+// 複数ユーザーにマルチキャスト送信（テキスト単体 - 後方互換）
 export async function multicastMessage(userIds: string[], text: string) {
   if (userIds.length === 0) return;
   const client = getLineClient();
   return client.multicast({
     to: userIds,
     messages: [{ type: "text", text }],
+  });
+}
+
+// 複数ユーザーにマルチキャスト送信（複数ブロック対応）
+export async function multicastMessages(userIds: string[], messages: any[]) {
+  if (userIds.length === 0) return;
+  const client = getLineClient();
+  return client.multicast({
+    to: userIds,
+    messages,
   });
 }
 
