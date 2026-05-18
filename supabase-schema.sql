@@ -115,11 +115,15 @@ CREATE POLICY "service_role_all" ON broadcasts FOR ALL USING (true) WITH CHECK (
 
 -- ===========================
 -- ステップ配信フロー
+-- trigger_tags: 複数のトリガータグ。trigger_match_mode が 'any' ならいずれか1つで開始、'all' なら全タグ揃って開始
+-- trigger_tag: 後方互換のため残存（旧バージョンとの互換性のみ）
 -- ===========================
 CREATE TABLE step_flows (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL,
-  trigger_tag TEXT NOT NULL,
+  trigger_tag TEXT,
+  trigger_tags TEXT[] NOT NULL DEFAULT '{}',
+  trigger_match_mode TEXT NOT NULL DEFAULT 'any' CHECK (trigger_match_mode IN ('any', 'all')),
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

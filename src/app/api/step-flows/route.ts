@@ -34,17 +34,34 @@ export async function GET() {
 // ステップフロー作成
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { name, trigger_tag, steps } = body;
+  const { name, trigger_tag, trigger_tags, trigger_match_mode, steps } = body;
 
-  if (!name || !trigger_tag) {
-    return NextResponse.json({ error: "名前とトリガータグは必須です" }, { status: 400 });
+  // 新形式（trigger_tags配列）優先。旧形式（trigger_tag単体）も受け取り後方互換。
+  const tagsArray: string[] = Array.isArray(trigger_tags)
+    ? trigger_tags.filter((t: unknown): t is string => typeof t === "string" && t.trim().length > 0)
+    : trigger_tag && typeof trigger_tag === "string" && trigger_tag.trim()
+      ? [trigger_tag.trim()]
+      : [];
+
+  if (!name || tagsArray.length === 0) {
+    return NextResponse.json(
+      { error: "名前とトリガータグ（1つ以上）は必須です" },
+      { status: 400 }
+    );
   }
+
+  const matchMode: "any" | "all" = trigger_match_mode === "all" ? "all" : "any";
 
   const supabase = getSupabaseAdmin();
 
   const { data: flow, error } = await supabase
     .from("step_flows")
-    .insert({ name, trigger_tag })
+    .insert({
+      name,
+      trigger_tag: tagsArray[0], // 後方互換のため先頭を入れておく
+      trigger_tags: tagsArray,
+      trigger_match_mode: matchMode,
+    })
     .select()
     .single();
 

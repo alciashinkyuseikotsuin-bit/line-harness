@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { getUserProfile, pushMessage, multicastMessage } from "@/lib/line";
+import { enrollMatchingStepFlows } from "@/lib/step-enrollment";
 
 // LINE署名検証
 function verifySignature(body: string, signature: string): boolean {
@@ -118,10 +119,13 @@ export async function POST(request: NextRequest) {
                   .single();
 
                 const currentTags: string[] = currentFriend?.tags || [];
+                const updatedTags = currentTags.includes(choice.tag)
+                  ? currentTags
+                  : [...currentTags, choice.tag];
                 if (!currentTags.includes(choice.tag)) {
                   await supabase
                     .from("friends")
-                    .update({ tags: [...currentTags, choice.tag] })
+                    .update({ tags: updatedTags })
                     .eq("id", friend.id);
                 }
 
@@ -144,41 +148,8 @@ export async function POST(request: NextRequest) {
                   await pushMessage(pbUserId, choice.broadcast_message);
                 }
 
-                // ステップフローのトリガーチェック
-                const { data: flows } = await supabase
-                  .from("step_flows")
-                  .select("id")
-                  .eq("trigger_tag", choice.tag)
-                  .eq("status", "active");
-
-                if (flows && flows.length > 0) {
-                  for (const flow of flows) {
-                    const { data: firstStep } = await supabase
-                      .from("step_messages")
-                      .select("delay_minutes")
-                      .eq("flow_id", flow.id)
-                      .order("sort_order", { ascending: true })
-                      .limit(1)
-                      .single();
-
-                    const nextSendAt = new Date();
-                    if (firstStep) {
-                      nextSendAt.setMinutes(nextSendAt.getMinutes() + firstStep.delay_minutes);
-                    }
-
-                    await supabase.from("step_enrollments").upsert(
-                      {
-                        flow_id: flow.id,
-                        friend_id: friend.id,
-                        current_step: 0,
-                        status: "active",
-                        enrolled_at: new Date().toISOString(),
-                        next_send_at: nextSendAt.toISOString(),
-                      },
-                      { onConflict: "flow_id,friend_id" }
-                    );
-                  }
-                }
+                // 更新後タグセットでステップフローのトリガーチェック（複数タグ + AND/OR対応）
+                await enrollMatchingStepFlows(supabase, friend.id, updatedTags);
               }
             }
           }

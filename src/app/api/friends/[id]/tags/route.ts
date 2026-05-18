@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { enrollMatchingStepFlows } from "@/lib/step-enrollment";
 
 export async function POST(
   request: NextRequest,
@@ -27,42 +28,8 @@ export async function POST(
   const newTags = [...currentTags, tag];
   await supabase.from("friends").update({ tags: newTags }).eq("id", id);
 
-  // Check if any step flow is triggered by this tag
-  const { data: flows } = await supabase
-    .from("step_flows")
-    .select("id")
-    .eq("trigger_tag", tag)
-    .eq("status", "active");
-
-  if (flows && flows.length > 0) {
-    for (const flow of flows) {
-      // Get first step's delay
-      const { data: firstStep } = await supabase
-        .from("step_messages")
-        .select("delay_minutes")
-        .eq("flow_id", flow.id)
-        .order("sort_order", { ascending: true })
-        .limit(1)
-        .single();
-
-      const nextSendAt = new Date();
-      if (firstStep) {
-        nextSendAt.setMinutes(nextSendAt.getMinutes() + firstStep.delay_minutes);
-      }
-
-      await supabase.from("step_enrollments").upsert(
-        {
-          flow_id: flow.id,
-          friend_id: id,
-          current_step: 0,
-          status: "active",
-          enrolled_at: new Date().toISOString(),
-          next_send_at: nextSendAt.toISOString(),
-        },
-        { onConflict: "flow_id,friend_id" }
-      );
-    }
-  }
+  // 更新後のタグセットでマッチするステップフローへ enroll
+  await enrollMatchingStepFlows(supabase, id, newTags);
 
   return NextResponse.json({ tags: newTags });
 }

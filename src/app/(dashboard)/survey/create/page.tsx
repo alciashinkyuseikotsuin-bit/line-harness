@@ -19,6 +19,7 @@ import {
   FileText,
 } from "lucide-react";
 import Link from "next/link";
+import { SurveyPreview } from "@/components/survey-preview";
 
 type Choice = {
   id: string;
@@ -290,7 +291,7 @@ export default function SurveyCreatePage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link href="/survey">
           <Button variant="ghost" size="icon">
@@ -300,6 +301,8 @@ export default function SurveyCreatePage() {
         <h1 className="text-2xl font-bold">アンケート作成</h1>
       </div>
 
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="space-y-6 min-w-0">
       {/* テンプレート */}
       <Card className="bg-muted/30">
         <CardContent className="pt-6">
@@ -563,6 +566,14 @@ export default function SurveyCreatePage() {
           <Send className="h-4 w-4 mr-2" />
           全員に配信
         </Button>
+      </div>
+        </div>
+        {/* プレビュー（PC幅でのみ右側固定表示） */}
+        <div className="hidden xl:block">
+          <div className="sticky top-6">
+            <SurveyPreview title={title} questions={questions} />
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -28,7 +28,9 @@ type StepMessage = {
 type StepFlow = {
   id: string;
   name: string;
-  trigger_tag: string;
+  trigger_tag: string | null;
+  trigger_tags: string[] | null;
+  trigger_match_mode: "any" | "all" | null;
   status: string;
   enrolled_count: number;
   step_messages: {
@@ -40,6 +42,13 @@ type StepFlow = {
   }[];
   created_at: string;
 };
+
+// 一覧表示用に、新形式 trigger_tags があればそれ、無ければ trigger_tag を1要素配列に
+function getEffectiveTriggers(flow: StepFlow): string[] {
+  if (flow.trigger_tags && flow.trigger_tags.length > 0) return flow.trigger_tags;
+  if (flow.trigger_tag) return [flow.trigger_tag];
+  return [];
+}
 
 function delayLabel(minutes: number): string {
   if (minutes === 0) return "即時";
@@ -53,7 +62,9 @@ export default function StepPage() {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
-  const [triggerTag, setTriggerTag] = useState("");
+  const [triggerTags, setTriggerTags] = useState<string[]>([]);
+  const [matchMode, setMatchMode] = useState<"any" | "all">("any");
+  const [newTagInput, setNewTagInput] = useState("");
   const [steps, setSteps] = useState<StepMessage[]>([
     { blocks: [createBlock("text")], delay_minutes: 0 },
   ]);
@@ -87,7 +98,7 @@ export default function StepPage() {
   }, []);
 
   async function createFlow() {
-    if (!name || !triggerTag) return;
+    if (!name || triggerTags.length === 0) return;
     setCreating(true);
     try {
       // ステップデータをAPIに送信（blocksを含む）
@@ -105,21 +116,38 @@ export default function StepPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
-          trigger_tag: triggerTag,
+          trigger_tags: triggerTags,
+          trigger_match_mode: matchMode,
           steps: stepsData,
         }),
       });
       if (res.ok) {
         setShowCreate(false);
         setName("");
-        setTriggerTag("");
+        setTriggerTags([]);
+        setMatchMode("any");
+        setNewTagInput("");
         setSteps([{ blocks: [createBlock("text")], delay_minutes: 0 }]);
         setActiveStepIndex(0);
         loadFlows();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || "フロー作成に失敗しました");
       }
     } finally {
       setCreating(false);
     }
+  }
+
+  function addTrigger(tag: string) {
+    const t = tag.trim();
+    if (!t) return;
+    if (triggerTags.includes(t)) return;
+    setTriggerTags([...triggerTags, t]);
+  }
+
+  function removeTrigger(tag: string) {
+    setTriggerTags(triggerTags.filter((t) => t !== tag));
   }
 
   async function toggleStatus(flow: StepFlow) {
@@ -166,32 +194,138 @@ export default function StepPage() {
                 </button>
               </div>
               <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="text-sm font-medium mb-1 block">
-                      フロー名
+                <div>
+                  <label className="text-sm font-medium mb-1 block">
+                    フロー名
+                  </label>
+                  <Input
+                    placeholder="例: 新規登録ウェルカム"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </div>
+
+                {/* トリガータグ（複数選択 + AND/OR） */}
+                <div className="space-y-3 rounded-lg border p-4 bg-muted/20">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <label className="text-sm font-medium">
+                      トリガータグ（このタグが付いたらフロー開始）
                     </label>
-                    <Input
-                      placeholder="例: 新規登録ウェルカム"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                    />
+                    <div className="flex items-center gap-1 rounded-md border bg-background p-0.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setMatchMode("any")}
+                        className={`px-2 py-1 rounded ${
+                          matchMode === "any"
+                            ? "bg-[#06C755] text-white"
+                            : "text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        いずれか1つ (OR)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMatchMode("all")}
+                        className={`px-2 py-1 rounded ${
+                          matchMode === "all"
+                            ? "bg-[#06C755] text-white"
+                            : "text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        すべて (AND)
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-sm font-medium mb-1 block">
-                      トリガータグ（このタグが付いたら開始）
-                    </label>
-                    <Input
-                      placeholder="例: 業種:整体院"
-                      value={triggerTag}
-                      onChange={(e) => setTriggerTag(e.target.value)}
-                      list="tag-suggestions"
-                    />
-                    <datalist id="tag-suggestions">
-                      {allTags.map((t) => (
-                        <option key={t} value={t} />
+
+                  {/* 選択済みタグ */}
+                  {triggerTags.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      タグが選択されていません。下から1つ以上選んでください。
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {triggerTags.map((t) => (
+                        <span
+                          key={t}
+                          className="inline-flex items-center gap-1 rounded-full bg-[#06C755] text-white px-3 py-1 text-xs"
+                        >
+                          <Tag className="h-3 w-3" />
+                          {t}
+                          <button
+                            type="button"
+                            onClick={() => removeTrigger(t)}
+                            className="ml-1 hover:opacity-70"
+                            aria-label={`${t}を削除`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
                       ))}
-                    </datalist>
+                    </div>
+                  )}
+
+                  {/* 既存タグから選ぶ */}
+                  {allTags.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1.5">
+                        既存タグから追加
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {allTags
+                          .filter((t) => !triggerTags.includes(t))
+                          .map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => addTrigger(t)}
+                              className="inline-flex items-center gap-1 rounded-full border border-muted-foreground/30 px-2.5 py-1 text-xs hover:border-[#06C755]/60 hover:bg-[#06C755]/5"
+                            >
+                              <Plus className="h-3 w-3" />
+                              {t}
+                            </button>
+                          ))}
+                        {allTags.filter((t) => !triggerTags.includes(t)).length === 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            既存タグはすべて追加済みです
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 新規タグを追加 */}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1.5">
+                      新しいタグを入力して追加
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="例: 業種:整体院"
+                        value={newTagInput}
+                        onChange={(e) => setNewTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addTrigger(newTagInput);
+                            setNewTagInput("");
+                          }
+                        }}
+                        className="text-sm"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          addTrigger(newTagInput);
+                          setNewTagInput("");
+                        }}
+                        disabled={!newTagInput.trim()}
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        追加
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
@@ -302,7 +436,7 @@ export default function StepPage() {
 
                 <Button
                   className="w-full bg-[#06C755] hover:bg-[#05b34c]"
-                  disabled={creating || !name || !triggerTag}
+                  disabled={creating || !name || triggerTags.length === 0}
                   onClick={createFlow}
                 >
                   {creating ? (
@@ -349,10 +483,22 @@ export default function StepPage() {
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <div className="space-y-1">
                   <CardTitle className="text-base">{flow.name}</CardTitle>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                    <span className="flex items-center gap-1 flex-wrap">
                       <Tag className="h-3 w-3" />
-                      トリガー: {flow.trigger_tag}
+                      トリガー:
+                      {getEffectiveTriggers(flow).map((t, i, arr) => (
+                        <span key={t} className="inline-flex items-center">
+                          <Badge variant="outline" className="text-xs">
+                            {t}
+                          </Badge>
+                          {i < arr.length - 1 && (
+                            <span className="mx-1 font-bold">
+                              {flow.trigger_match_mode === "all" ? "AND" : "OR"}
+                            </span>
+                          )}
+                        </span>
+                      ))}
                     </span>
                     <span>登録: {flow.enrolled_count}人</span>
                   </div>
