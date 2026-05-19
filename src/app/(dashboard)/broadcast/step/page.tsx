@@ -69,9 +69,11 @@ export default function StepPage() {
     { blocks: [createBlock("text")], delay_minutes: 0 },
   ]);
   const [creating, setCreating] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [allTags, setAllTags] = useState<string[]>([]);
   const [activeStepIndex, setActiveStepIndex] = useState(0);
   const [surveys, setSurveys] = useState<{ id: string; title: string }[]>([]);
+  const [editingFlowId, setEditingFlowId] = useState<string | null>(null);
 
   function loadFlows() {
     fetch("/api/step-flows")
@@ -97,45 +99,117 @@ export default function StepPage() {
       .catch(() => {});
   }, []);
 
-  async function createFlow() {
-    if (!name || triggerTags.length === 0) return;
-    setCreating(true);
-    try {
-      // ステップデータをAPIに送信（blocksを含む）
-      const stepsData = steps.map((s) => ({
-        message_text: s.blocks
+  function resetForm() {
+    setName("");
+    setTriggerTags([]);
+    setMatchMode("any");
+    setNewTagInput("");
+    setSteps([{ blocks: [createBlock("text")], delay_minutes: 0 }]);
+    setActiveStepIndex(0);
+    setEditingFlowId(null);
+  }
+
+  function buildStepsPayload() {
+    return steps.map((s) => ({
+      message_text:
+        s.blocks
           .filter((b) => b.type === "text" && b.text)
           .map((b) => b.text)
           .join("\n") || "（メディアメッセージ）",
-        message_blocks: s.blocks,
-        delay_minutes: s.delay_minutes,
-      }));
+      message_blocks: s.blocks,
+      delay_minutes: s.delay_minutes,
+    }));
+  }
 
-      const res = await fetch("/api/step-flows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          trigger_tags: triggerTags,
-          trigger_match_mode: matchMode,
-          steps: stepsData,
-        }),
-      });
+  // 編集モードでフローを読み込む
+  async function openFlowForEdit(flowId: string) {
+    const res = await fetch(`/api/step-flows/${flowId}`);
+    const data = await res.json();
+    if (!res.ok || !data.flow) {
+      alert(data.error || "フローの読み込みに失敗しました");
+      return;
+    }
+    const f = data.flow;
+    setEditingFlowId(flowId);
+    setName(f.name || "");
+    setTriggerTags(
+      Array.isArray(f.trigger_tags) && f.trigger_tags.length > 0
+        ? f.trigger_tags
+        : f.trigger_tag
+          ? [f.trigger_tag]
+          : []
+    );
+    setMatchMode(f.trigger_match_mode === "all" ? "all" : "any");
+    const loadedSteps = (f.step_messages || []).map(
+      (m: { message_blocks: MessageBlock[] | null; delay_minutes: number }) => ({
+        blocks:
+          Array.isArray(m.message_blocks) && m.message_blocks.length > 0
+            ? m.message_blocks
+            : [createBlock("text")],
+        delay_minutes: m.delay_minutes || 0,
+      })
+    );
+    setSteps(
+      loadedSteps.length > 0
+        ? loadedSteps
+        : [{ blocks: [createBlock("text")], delay_minutes: 0 }]
+    );
+    setActiveStepIndex(0);
+    setShowCreate(true);
+  }
+
+  // 「フロー作成」or「下書き保存」（saveAsDraft=true で status=draft）
+  async function createFlow(opts: { saveAsDraft?: boolean } = {}) {
+    if (!name) {
+      alert("フロー名を入力してください");
+      return;
+    }
+    if (!opts.saveAsDraft && triggerTags.length === 0) {
+      alert("トリガータグを1つ以上選択してください");
+      return;
+    }
+    const setBusy = opts.saveAsDraft ? setSavingDraft : setCreating;
+    setBusy(true);
+    try {
+      const stepsData = buildStepsPayload();
+      const payload = {
+        name,
+        trigger_tags: triggerTags,
+        trigger_match_mode: matchMode,
+        steps: stepsData,
+        ...(opts.saveAsDraft ? { saveAsDraft: true } : {}),
+      };
+
+      let res;
+      if (editingFlowId) {
+        // 編集: PATCH
+        const patchPayload: Record<string, unknown> = { ...payload };
+        if (opts.saveAsDraft) {
+          patchPayload.status = "draft";
+        }
+        delete (patchPayload as Record<string, unknown>).saveAsDraft;
+        res = await fetch(`/api/step-flows/${editingFlowId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patchPayload),
+        });
+      } else {
+        res = await fetch("/api/step-flows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
       if (res.ok) {
         setShowCreate(false);
-        setName("");
-        setTriggerTags([]);
-        setMatchMode("any");
-        setNewTagInput("");
-        setSteps([{ blocks: [createBlock("text")], delay_minutes: 0 }]);
-        setActiveStepIndex(0);
+        resetForm();
         loadFlows();
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || "フロー作成に失敗しました");
+        alert(err.error || "保存に失敗しました");
       }
     } finally {
-      setCreating(false);
+      setBusy(false);
     }
   }
 
@@ -175,7 +249,10 @@ export default function StepPage() {
         <h1 className="text-2xl font-bold">ステップ配信</h1>
         <Button
           className="bg-[#06C755] hover:bg-[#05b34c]"
-          onClick={() => setShowCreate(true)}
+          onClick={() => {
+            resetForm();
+            setShowCreate(true);
+          }}
         >
           <Plus className="h-4 w-4 mr-2" />
           フロー作成
@@ -188,8 +265,15 @@ export default function StepPage() {
           <Card className="border-[#06C755]">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold">新規ステップフロー</h3>
-                <button onClick={() => setShowCreate(false)}>
+                <h3 className="font-bold">
+                  {editingFlowId ? "フローを編集" : "新規ステップフロー"}
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowCreate(false);
+                    resetForm();
+                  }}
+                >
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -434,16 +518,29 @@ export default function StepPage() {
                   </Button>
                 </div>
 
-                <Button
-                  className="w-full bg-[#06C755] hover:bg-[#05b34c]"
-                  disabled={creating || !name || triggerTags.length === 0}
-                  onClick={createFlow}
-                >
-                  {creating ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : null}
-                  フローを作成
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    disabled={savingDraft || !name}
+                    onClick={() => createFlow({ saveAsDraft: true })}
+                  >
+                    {savingDraft ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    下書き保存
+                  </Button>
+                  <Button
+                    className="flex-1 bg-[#06C755] hover:bg-[#05b34c]"
+                    disabled={creating || !name || triggerTags.length === 0}
+                    onClick={() => createFlow()}
+                  >
+                    {creating ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : null}
+                    {editingFlowId ? "保存して有効化" : "フローを作成"}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -509,12 +606,28 @@ export default function StepPage() {
                     className={
                       flow.status === "active"
                         ? "bg-green-100 text-green-700 cursor-pointer"
-                        : "bg-yellow-100 text-yellow-700 cursor-pointer"
+                        : flow.status === "draft"
+                          ? "bg-gray-100 text-gray-500"
+                          : "bg-yellow-100 text-yellow-700 cursor-pointer"
                     }
-                    onClick={() => toggleStatus(flow)}
+                    onClick={() => {
+                      // 下書きはステータス切替不可（編集経由で有効化）
+                      if (flow.status !== "draft") toggleStatus(flow);
+                    }}
                   >
-                    {flow.status === "active" ? "稼働中" : "一時停止"}
+                    {flow.status === "active"
+                      ? "稼働中"
+                      : flow.status === "draft"
+                        ? "下書き"
+                        : "一時停止"}
                   </Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openFlowForEdit(flow.id)}
+                  >
+                    編集
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"

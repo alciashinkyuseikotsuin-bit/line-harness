@@ -34,7 +34,7 @@ export async function GET() {
 // ステップフロー作成
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { name, trigger_tag, trigger_tags, trigger_match_mode, steps } = body;
+  const { name, trigger_tag, trigger_tags, trigger_match_mode, steps, saveAsDraft } = body;
 
   // 新形式（trigger_tags配列）優先。旧形式（trigger_tag単体）も受け取り後方互換。
   const tagsArray: string[] = Array.isArray(trigger_tags)
@@ -43,9 +43,13 @@ export async function POST(request: NextRequest) {
       ? [trigger_tag.trim()]
       : [];
 
-  if (!name || tagsArray.length === 0) {
+  // 下書きモード: 名前さえあれば保存可。トリガータグ無しでもOK
+  if (!name) {
+    return NextResponse.json({ error: "名前は必須です" }, { status: 400 });
+  }
+  if (!saveAsDraft && tagsArray.length === 0) {
     return NextResponse.json(
-      { error: "名前とトリガータグ（1つ以上）は必須です" },
+      { error: "トリガータグ（1つ以上）は必須です" },
       { status: 400 }
     );
   }
@@ -58,9 +62,10 @@ export async function POST(request: NextRequest) {
     .from("step_flows")
     .insert({
       name,
-      trigger_tag: tagsArray[0], // 後方互換のため先頭を入れておく
+      trigger_tag: tagsArray[0] || null,
       trigger_tags: tagsArray,
       trigger_match_mode: matchMode,
+      status: saveAsDraft ? "draft" : "active",
     })
     .select()
     .single();
@@ -69,10 +74,11 @@ export async function POST(request: NextRequest) {
 
   // ステップメッセージを追加
   if (steps && steps.length > 0) {
-    const messages = steps.map((step: any, i: number) => ({
+    const messages = steps.map((step: { message_text?: string; message_blocks?: unknown; delay_minutes?: number }, i: number) => ({
       flow_id: flow.id,
-      message_text: step.message_text,
-      delay_minutes: step.delay_minutes,
+      message_text: step.message_text || "",
+      message_blocks: step.message_blocks || null,
+      delay_minutes: step.delay_minutes || 0,
       sort_order: i,
     }));
 

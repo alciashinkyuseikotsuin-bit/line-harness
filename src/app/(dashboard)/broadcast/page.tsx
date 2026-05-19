@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Send, X, Loader2, Tag, Users } from "lucide-react";
+import { Plus, Send, X, Loader2, Tag, Users, FileText, Trash2 } from "lucide-react";
 import { LinePreview } from "@/components/line-preview";
 import { MessageBlockEditor } from "@/components/message-block-editor";
 import type { MessageBlock } from "@/types/blocks";
@@ -69,6 +69,9 @@ export default function BroadcastPage() {
   const [friendsWithTags, setFriendsWithTags] = useState<
     { tags: string[] | null }[]
   >([]);
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/broadcast")
@@ -116,6 +119,94 @@ export default function BroadcastPage() {
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
     );
+  }
+
+  function resetForm() {
+    setTitle("");
+    setBlocks([createBlock("text")]);
+    setTargetMode("all");
+    setSelectedTags([]);
+    setTestDone(false);
+    setEditingDraftId(null);
+  }
+
+  // 下書きを編集モードで開く
+  async function openDraft(d: Broadcast) {
+    const res = await fetch(`/api/broadcast/${d.id}`);
+    const data = await res.json();
+    if (!res.ok || !data.broadcast) {
+      alert(data.error || "下書きの読み込みに失敗しました");
+      return;
+    }
+    const b = data.broadcast;
+    setEditingDraftId(b.id);
+    setTitle(b.title || "");
+    setBlocks(
+      Array.isArray(b.message_blocks) && b.message_blocks.length > 0
+        ? b.message_blocks
+        : [createBlock("text")]
+    );
+    setTargetMode(b.target_type === "segment" ? "tags" : "all");
+    setSelectedTags(Array.isArray(b.target_tags) ? b.target_tags : []);
+    setTestDone(false);
+    setShowCreate(true);
+    setShowConfirm(false);
+  }
+
+  // 下書き保存（編集中ならPATCH、新規ならPOST saveAsDraft）
+  async function saveAsDraft() {
+    if (!title.trim() && !hasContent) {
+      alert("タイトルかメッセージを入力してから保存してください");
+      return;
+    }
+    setSavingDraft(true);
+    try {
+      const payload = {
+        title: title || "下書き",
+        blocks,
+        targetType: targetMode === "tags" ? "segment" : "all",
+        targetTags: selectedTags,
+      };
+      let res;
+      if (editingDraftId) {
+        res = await fetch(`/api/broadcast/${editingDraftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch("/api/broadcast", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, saveAsDraft: true }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "保存に失敗しました");
+        return;
+      }
+      setResult("✅ 下書きを保存しました");
+      // 一覧を再読込してフォームを閉じる
+      const listRes = await fetch("/api/broadcast");
+      const listData = await listRes.json();
+      setBroadcasts(listData.broadcasts || []);
+      setShowCreate(false);
+      setShowConfirm(false);
+      resetForm();
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  async function deleteBroadcast(id: string) {
+    const res = await fetch(`/api/broadcast/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setConfirmDeleteId(null);
+      const listRes = await fetch("/api/broadcast");
+      const listData = await listRes.json();
+      setBroadcasts(listData.broadcasts || []);
+    }
   }
 
   const hasContent = blocks.some((b) => {
@@ -187,13 +278,13 @@ export default function BroadcastPage() {
       const data = await res.json();
       if (res.ok) {
         setResult(`配信完了: ${data.deliveredCount}人に送信しました`);
+        // 編集していた下書きがあれば削除（履歴に「下書き」と「配信済み」が両方残らないように）
+        if (editingDraftId) {
+          await fetch(`/api/broadcast/${editingDraftId}`, { method: "DELETE" });
+        }
         setShowCreate(false);
         setShowConfirm(false);
-        setTitle("");
-        setBlocks([createBlock("text")]);
-        setTestDone(false);
-        setTargetMode("all");
-        setSelectedTags([]);
+        resetForm();
         const listRes = await fetch("/api/broadcast");
         const listData = await listRes.json();
         setBroadcasts(listData.broadcasts || []);
@@ -219,7 +310,10 @@ export default function BroadcastPage() {
         <h1 className="text-2xl font-bold">一斉配信</h1>
         <Button
           className="bg-[#06C755] hover:bg-[#05b34c]"
-          onClick={() => setShowCreate(true)}
+          onClick={() => {
+            resetForm();
+            setShowCreate(true);
+          }}
         >
           <Plus className="h-4 w-4 mr-2" />
           新規配信
@@ -232,8 +326,15 @@ export default function BroadcastPage() {
           <Card className="border-[#06C755]">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold">新規一斉配信</h3>
-                <button onClick={() => setShowCreate(false)}>
+                <h3 className="font-bold">
+                  {editingDraftId ? "下書きを編集" : "新規一斉配信"}
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowCreate(false);
+                    resetForm();
+                  }}
+                >
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -340,17 +441,32 @@ export default function BroadcastPage() {
                   )}
                 </div>
 
-                <Button
-                  className="w-full bg-[#06C755] hover:bg-[#05b34c]"
-                  disabled={
-                    !hasContent ||
-                    (targetMode === "tags" && selectedTags.length === 0)
-                  }
-                  onClick={() => setShowConfirm(true)}
-                >
-                  <Send className="h-4 w-4 mr-2" />
-                  配信内容を確認
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    disabled={savingDraft}
+                    onClick={saveAsDraft}
+                  >
+                    {savingDraft ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <FileText className="h-4 w-4 mr-2" />
+                    )}
+                    下書き保存
+                  </Button>
+                  <Button
+                    className="flex-1 bg-[#06C755] hover:bg-[#05b34c]"
+                    disabled={
+                      !hasContent ||
+                      (targetMode === "tags" && selectedTags.length === 0)
+                    }
+                    onClick={() => setShowConfirm(true)}
+                  >
+                    <Send className="h-4 w-4 mr-2" />
+                    配信内容を確認
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -515,11 +631,22 @@ export default function BroadcastPage() {
                       <TableHead>対象</TableHead>
                       <TableHead>配信数</TableHead>
                       <TableHead>ステータス</TableHead>
+                      <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {broadcasts.map((b) => (
-                      <TableRow key={b.id}>
+                      <TableRow
+                        key={b.id}
+                        className={
+                          b.status === "draft"
+                            ? "cursor-pointer hover:bg-muted/50"
+                            : ""
+                        }
+                        onClick={() => {
+                          if (b.status === "draft") openDraft(b);
+                        }}
+                      >
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Send className="h-4 w-4 text-muted-foreground" />
@@ -545,6 +672,35 @@ export default function BroadcastPage() {
                         </TableCell>
                         <TableCell>
                           <StatusBadge status={b.status} />
+                        </TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {confirmDeleteId === b.id ? (
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setConfirmDeleteId(null)}
+                              >
+                                取消
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="bg-red-600 hover:bg-red-700 text-white"
+                                onClick={() => deleteBroadcast(b.id)}
+                              >
+                                削除
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() => setConfirmDeleteId(b.id)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

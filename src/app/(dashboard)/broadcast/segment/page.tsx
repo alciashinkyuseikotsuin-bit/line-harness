@@ -118,6 +118,39 @@ export default function SegmentPage() {
     }
   }
 
+  async function saveSegmentDraft() {
+    if (!title.trim() && !hasContent && selectedTags.length === 0) {
+      alert("タイトル・タグ・メッセージのいずれかを入力してから保存してください");
+      return;
+    }
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title || `セグメント下書き（${selectedTags.join(", ") || "未選択"}）`,
+          blocks,
+          targetType: "segment",
+          targetTags: selectedTags,
+          saveAsDraft: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult("✅ 下書きを保存しました（一斉配信ページの一覧から編集できます）");
+        setTitle("");
+        setBlocks([createBlock("text")]);
+        setSelectedTags([]);
+        setTestDone(false);
+        setShowConfirm(false);
+      } else {
+        setResult(`❌ エラー: ${data.error}`);
+      }
+    } catch {
+      setResult("❌ 下書き保存に失敗しました");
+    }
+  }
+
   async function sendSegment() {
     if (!testDone) {
       alert("先にテスト配信を行ってください");
@@ -232,14 +265,23 @@ export default function SegmentPage() {
                 surveys={surveys}
               />
             </div>
-            <Button
-              className="w-full bg-[#06C755] hover:bg-[#05b34c]"
-              disabled={selectedTags.length === 0 || !hasContent || sending}
-              onClick={() => setShowConfirm(true)}
-            >
-              <Send className="h-4 w-4 mr-2" />
-              配信内容を確認
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={saveSegmentDraft}
+              >
+                下書き保存
+              </Button>
+              <Button
+                className="flex-1 bg-[#06C755] hover:bg-[#05b34c]"
+                disabled={selectedTags.length === 0 || !hasContent || sending}
+                onClick={() => setShowConfirm(true)}
+              >
+                <Send className="h-4 w-4 mr-2" />
+                配信内容を確認
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

@@ -126,7 +126,7 @@ CREATE TABLE step_flows (
   trigger_tag TEXT,
   trigger_tags TEXT[] NOT NULL DEFAULT '{}',
   trigger_match_mode TEXT NOT NULL DEFAULT 'any' CHECK (trigger_match_mode IN ('any', 'all')),
-  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'draft')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

@@ -25,12 +25,41 @@ export async function GET() {
   return NextResponse.json({ broadcasts: data });
 }
 
-// 配信実行
+// 配信実行 or 下書き保存（saveAsDraft=true で送信せず保存のみ）
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { title, message, blocks, targetType, targetTags, targetChoiceId } = body;
+  const { title, message, blocks, targetType, targetTags, targetChoiceId, saveAsDraft } = body;
 
   const supabase = getSupabaseAdmin();
+
+  // 下書き保存モード: 送信せずに status='draft' で保存
+  if (saveAsDraft) {
+    const messageText = Array.isArray(blocks)
+      ? blocks
+          .filter((b: { type: string; text?: string }) => b.type === "text" && b.text)
+          .map((b: { text: string }) => b.text)
+          .join("\n")
+      : (message || "");
+
+    const { data: broadcast, error } = await supabase
+      .from("broadcasts")
+      .insert({
+        title: title || "下書き",
+        message_text: messageText,
+        message_blocks: blocks || null,
+        target_type: targetType || "all",
+        target_tags: Array.isArray(targetTags) ? targetTags : [],
+        target_choice_id: targetChoiceId || null,
+        status: "draft",
+      })
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ broadcast, savedAsDraft: true });
+  }
 
   try {
     let deliveredCount = 0;
