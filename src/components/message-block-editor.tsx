@@ -314,10 +314,10 @@ export function MessageBlockEditor({ blocks, onChange, surveys = [] }: Props) {
             <span className="text-sm font-medium">追加</span>
           </button>
 
-          {/* タイプ選択モーダル */}
+          {/* タイプ選択（フローに統合 - 親Cardの高さを伸ばすことでスクロールしてもクリックできる） */}
           {showTypeSelector && (
-            <div className="absolute top-full left-0 right-0 mt-2 z-20">
-              <Card className="shadow-lg border-2">
+            <div className="mt-2">
+              <Card className="border-2 border-[#06C755]/30">
                 <CardContent className="pt-4 pb-4">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-sm font-medium">メッセージの種類を選択</span>
@@ -332,10 +332,10 @@ export function MessageBlockEditor({ blocks, onChange, surveys = [] }: Props) {
                         onClick={() => addBlock(opt.type)}
                         className="flex items-center gap-3 rounded-lg border px-4 py-3 hover:bg-muted transition-colors text-left"
                       >
-                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
                           <opt.icon className="h-5 w-5 text-muted-foreground" />
                         </div>
-                        <span className="text-sm font-medium">{opt.label}</span>
+                        <span className="text-sm font-medium truncate">{opt.label}</span>
                       </button>
                     ))}
                   </div>
