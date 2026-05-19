@@ -45,14 +45,19 @@ export async function GET() {
 // アンケート作成
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { title, description, questions } = body;
+  const { title, description, completionMessage, questions } = body;
 
   const supabase = getSupabaseAdmin();
 
   // アンケート作成
   const { data: survey, error: surveyError } = await supabase
     .from("surveys")
-    .insert({ title, description, status: "draft" })
+    .insert({
+      title,
+      description,
+      completion_message: completionMessage || null,
+      status: "draft",
+    })
     .select()
     .single();
 

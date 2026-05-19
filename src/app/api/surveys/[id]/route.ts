@@ -61,6 +61,7 @@ export async function GET(
       id: survey.id,
       title: survey.title,
       description: survey.description,
+      completionMessage: survey.completion_message || "",
       status: survey.status,
       questions,
     },
@@ -74,7 +75,7 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = await request.json();
-  const { title, description, questions } = body;
+  const { title, description, completionMessage, questions } = body;
 
   const supabase = getSupabaseAdmin();
 
@@ -92,12 +93,13 @@ export async function PATCH(
     );
   }
 
-  // タイトル・説明を更新
+  // タイトル・説明・完了メッセージを更新
   const { error: updateError } = await supabase
     .from("surveys")
     .update({
       title,
       description,
+      completion_message: completionMessage || null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);

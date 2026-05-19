@@ -27,6 +27,8 @@ CREATE TABLE surveys (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT,
+  -- 全質問回答完了時にユーザーへ送るメッセージ（任意）
+  completion_message TEXT,
   status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'closed')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

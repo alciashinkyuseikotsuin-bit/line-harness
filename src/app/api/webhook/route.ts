@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { getUserProfile, pushMessage, multicastMessage, sendSurveyMessage } from "@/lib/line";
+import {
+  getUserProfile,
+  pushMessage,
+  pushMessages,
+  multicastMessage,
+  buildSurveyFlexMessage,
+} from "@/lib/line";
 import { enrollMatchingStepFlows } from "@/lib/step-enrollment";
 
 // LINE署名検証
@@ -103,117 +109,153 @@ export async function POST(request: NextRequest) {
                 { onConflict: "friend_id,question_id" }
               );
 
-              // 選択肢のタグを取得して友だちにタグ付け
-              const { data: choice } = await supabase
-                .from("survey_choices")
-                .select("tag, broadcast_message")
-                .eq("id", choiceId)
-                .single();
-
-              if (choice?.tag) {
-                // タグ追加
-                const { data: currentFriend } = await supabase
+              // === 並列で取得: choice / friend tags / アンケート設問一覧 / 既回答 / completion_message ===
+              const [
+                choiceRes,
+                currentFriendRes,
+                allQuestionsRes,
+                answeredRes,
+                surveyRes,
+              ] = await Promise.all([
+                supabase
+                  .from("survey_choices")
+                  .select("tag, broadcast_message")
+                  .eq("id", choiceId)
+                  .single(),
+                supabase
                   .from("friends")
                   .select("tags")
                   .eq("id", friend.id)
-                  .single();
+                  .single(),
+                supabase
+                  .from("survey_questions")
+                  .select(
+                    `id, question_text, sort_order,
+                     survey_choices ( id, choice_text, sort_order )`
+                  )
+                  .eq("survey_id", surveyId)
+                  .order("sort_order", { ascending: true }),
+                supabase
+                  .from("survey_responses")
+                  .select("question_id")
+                  .eq("survey_id", surveyId)
+                  .eq("friend_id", friend.id),
+                supabase
+                  .from("surveys")
+                  .select("completion_message")
+                  .eq("id", surveyId)
+                  .single(),
+              ]);
 
-                const currentTags: string[] = currentFriend?.tags || [];
+              const choice = choiceRes.data;
+
+              if (choice?.tag) {
+                // タグ追加（既存に含まれていなければ）
+                const currentTags: string[] = currentFriendRes.data?.tags || [];
                 const updatedTags = currentTags.includes(choice.tag)
                   ? currentTags
                   : [...currentTags, choice.tag];
-                if (!currentTags.includes(choice.tag)) {
-                  await supabase
-                    .from("friends")
-                    .update({ tags: updatedTags })
-                    .eq("id", friend.id);
-                }
 
-                // 自由記入チェック（isFreeInput フラグ）
                 const isFreeInputChoice =
-                  choice.broadcast_message && choice.tag.includes("その他");
+                  !!choice.broadcast_message && choice.tag.includes("その他");
 
+                // バックグラウンドタスク（友だちレコード更新・ステップフロー登録）を即発火
+                // メッセージ送信前に await する必要がないので、Promise.all で並列実行する
+                const friendUpdate: Record<string, unknown> = {};
+                if (!currentTags.includes(choice.tag)) {
+                  friendUpdate.tags = updatedTags;
+                }
                 if (isFreeInputChoice) {
-                  // 「その他」選択 → 自由記入待ち状態にする
-                  // 次質問送信は自由記入完了後（message event 側）で行う
-                  await supabase
-                    .from("friends")
-                    .update({
-                      pending_input: {
-                        type: "free_tag",
-                        base_tag: choice.tag.replace(":その他", ""),
-                        prompt: choice.broadcast_message,
-                        survey_id: surveyId,
-                        question_id: questionId,
-                      },
-                    })
-                    .eq("id", friend.id);
-                  await pushMessage(pbUserId, choice.broadcast_message);
-                } else if (choice.broadcast_message) {
-                  // 通常の自動返信
-                  await pushMessage(pbUserId, choice.broadcast_message);
+                  friendUpdate.pending_input = {
+                    type: "free_tag",
+                    base_tag: choice.tag.replace(":その他", ""),
+                    prompt: choice.broadcast_message,
+                    survey_id: surveyId,
+                    question_id: questionId,
+                  };
                 }
 
-                // 更新後タグセットでステップフローのトリガーチェック（複数タグ + AND/OR対応）
-                await enrollMatchingStepFlows(supabase, friend.id, updatedTags);
+                const bgTasks: Promise<unknown>[] = [];
+                if (Object.keys(friendUpdate).length > 0) {
+                  bgTasks.push(
+                    Promise.resolve(
+                      supabase.from("friends").update(friendUpdate).eq("id", friend.id)
+                    )
+                  );
+                }
+                bgTasks.push(
+                  enrollMatchingStepFlows(supabase, friend.id, updatedTags)
+                );
 
-                // 自由記入待ちの場合は次質問を送らない（message event 側で送る）
-                if (isFreeInputChoice) {
-                  break;
+                // === 送信メッセージを一度に組み立てて 1 回の pushMessages で送る ===
+                // 1) 選択肢の自動返信（あれば）
+                // 2) 次質問の Flex（あれば） または 完了メッセージ（最終回答時）
+                const messagesToSend: unknown[] = [];
+
+                if (choice.broadcast_message) {
+                  messagesToSend.push({
+                    type: "text",
+                    text: choice.broadcast_message,
+                  });
                 }
 
-                // 次の質問を送る（同じアンケート内で sort_order が今より大きい未回答のうち最小）
-                try {
-                  const { data: currentQ } = await supabase
-                    .from("survey_questions")
-                    .select("sort_order")
-                    .eq("id", questionId)
-                    .single();
+                if (isFreeInputChoice) {
+                  // 自由記入待ち。次質問は message event 側で送る
+                } else {
+                  const allQuestions = (allQuestionsRes.data || []) as unknown as {
+                    id: string;
+                    question_text: string;
+                    sort_order: number;
+                    survey_choices: { id: string; choice_text: string; sort_order: number }[];
+                  }[];
+                  const currentQ = allQuestions.find((q) => q.id === questionId);
+                  const answeredIds = new Set(
+                    (answeredRes.data || []).map(
+                      (a: { question_id: string }) => a.question_id
+                    )
+                  );
+                  // 今回の回答も加える（responses 取得が並列なのでまだ含まれていない可能性がある）
+                  answeredIds.add(questionId);
 
-                  if (currentQ) {
-                    const { data: nextQuestions } = await supabase
-                      .from("survey_questions")
-                      .select(
-                        `id, question_text, sort_order,
-                         survey_choices ( id, choice_text, sort_order )`
-                      )
-                      .eq("survey_id", surveyId)
-                      .gt("sort_order", currentQ.sort_order)
-                      .order("sort_order", { ascending: true });
+                  const nextQ = currentQ
+                    ? allQuestions
+                        .filter((q) => q.sort_order > currentQ.sort_order)
+                        .find((q) => !answeredIds.has(q.id))
+                    : undefined;
 
-                    // この友だちが既に回答済みの question_id を取得
-                    const { data: answered } = await supabase
-                      .from("survey_responses")
-                      .select("question_id")
-                      .eq("survey_id", surveyId)
-                      .eq("friend_id", friend.id);
-                    const answeredIds = new Set(
-                      (answered || []).map((a: { question_id: string }) => a.question_id)
-                    );
-
-                    const nextQ = (nextQuestions || []).find(
-                      (q: { id: string }) => !answeredIds.has(q.id)
-                    );
-
-                    if (nextQ) {
-                      const sortedChoices = ((nextQ as unknown as {
-                        survey_choices: { id: string; choice_text: string; sort_order: number }[];
-                      }).survey_choices || [])
-                        .sort((a, b) => a.sort_order - b.sort_order)
-                        .map((c) => ({ id: c.id, text: c.choice_text }));
-
-                      await sendSurveyMessage(
-                        pbUserId,
+                  if (nextQ) {
+                    const sortedChoices = (nextQ.survey_choices || [])
+                      .slice()
+                      .sort((a, b) => a.sort_order - b.sort_order)
+                      .map((c) => ({ id: c.id, text: c.choice_text }));
+                    messagesToSend.push(
+                      buildSurveyFlexMessage(
                         surveyId,
-                        (nextQ as { id: string }).id,
-                        (nextQ as { question_text: string }).question_text,
+                        nextQ.id,
+                        nextQ.question_text,
                         sortedChoices
-                      );
+                      )
+                    );
+                  } else {
+                    // 次質問なし = 全質問回答完了。完了メッセージがあれば送る
+                    const completionMessage = surveyRes.data?.completion_message;
+                    if (completionMessage && completionMessage.trim()) {
+                      messagesToSend.push({ type: "text", text: completionMessage });
                     }
                   }
-                } catch (nextErr) {
-                  console.error("次質問送信エラー:", nextErr);
                 }
+
+                // 送信（LINE は1リクエストで最大5メッセージ。本処理では最大2つなので余裕）
+                if (messagesToSend.length > 0) {
+                  try {
+                    await pushMessages(pbUserId, messagesToSend);
+                  } catch (err) {
+                    console.error("push 失敗:", err);
+                  }
+                }
+
+                // バックグラウンドタスクは送信後に完了を待つ（webhook の200返しが遅れない範囲）
+                await Promise.allSettled(bgTasks);
               }
             }
           }
@@ -262,7 +304,7 @@ export async function POST(request: NextRequest) {
                 // 更新後タグセットでステップフローのトリガー再評価
                 await enrollMatchingStepFlows(supabase, existing.id, updatedTags);
 
-                // 自由記入が含まれていたアンケートの次質問を送る
+                // 自由記入が含まれていたアンケートの次質問 / 完了メッセージを送る
                 const pi = existing.pending_input as {
                   type: string;
                   survey_id?: string;
@@ -270,56 +312,69 @@ export async function POST(request: NextRequest) {
                 };
                 if (pi.survey_id && pi.question_id) {
                   try {
-                    const { data: currentQ } = await supabase
-                      .from("survey_questions")
-                      .select("sort_order")
-                      .eq("id", pi.question_id)
-                      .single();
+                    const [allQuestionsRes2, answeredRes2, surveyRes2] =
+                      await Promise.all([
+                        supabase
+                          .from("survey_questions")
+                          .select(
+                            `id, question_text, sort_order,
+                             survey_choices ( id, choice_text, sort_order )`
+                          )
+                          .eq("survey_id", pi.survey_id)
+                          .order("sort_order", { ascending: true }),
+                        supabase
+                          .from("survey_responses")
+                          .select("question_id")
+                          .eq("survey_id", pi.survey_id)
+                          .eq("friend_id", existing.id),
+                        supabase
+                          .from("surveys")
+                          .select("completion_message")
+                          .eq("id", pi.survey_id)
+                          .single(),
+                      ]);
 
-                    if (currentQ) {
-                      const { data: nextQuestions } = await supabase
-                        .from("survey_questions")
-                        .select(
-                          `id, question_text, sort_order,
-                           survey_choices ( id, choice_text, sort_order )`
-                        )
-                        .eq("survey_id", pi.survey_id)
-                        .gt("sort_order", currentQ.sort_order)
-                        .order("sort_order", { ascending: true });
+                    const allQs = (allQuestionsRes2.data || []) as unknown as {
+                      id: string;
+                      question_text: string;
+                      sort_order: number;
+                      survey_choices: { id: string; choice_text: string; sort_order: number }[];
+                    }[];
+                    const currentQ = allQs.find((q) => q.id === pi.question_id);
+                    const answeredIds = new Set(
+                      (answeredRes2.data || []).map(
+                        (a: { question_id: string }) => a.question_id
+                      )
+                    );
+                    answeredIds.add(pi.question_id);
 
-                      const { data: answered } = await supabase
-                        .from("survey_responses")
-                        .select("question_id")
-                        .eq("survey_id", pi.survey_id)
-                        .eq("friend_id", existing.id);
-                      const answeredIds = new Set(
-                        (answered || []).map(
-                          (a: { question_id: string }) => a.question_id
-                        )
-                      );
+                    const nextQ = currentQ
+                      ? allQs
+                          .filter((q) => q.sort_order > currentQ.sort_order)
+                          .find((q) => !answeredIds.has(q.id))
+                      : undefined;
 
-                      const nextQ = (nextQuestions || []).find(
-                        (q: { id: string }) => !answeredIds.has(q.id)
-                      );
-
-                      if (nextQ) {
-                        const sortedChoices = ((nextQ as unknown as {
-                          survey_choices: { id: string; choice_text: string; sort_order: number }[];
-                        }).survey_choices || [])
-                          .sort((a, b) => a.sort_order - b.sort_order)
-                          .map((c) => ({ id: c.id, text: c.choice_text }));
-
-                        await sendSurveyMessage(
-                          userId,
+                    if (nextQ) {
+                      const sortedChoices = (nextQ.survey_choices || [])
+                        .slice()
+                        .sort((a, b) => a.sort_order - b.sort_order)
+                        .map((c) => ({ id: c.id, text: c.choice_text }));
+                      await pushMessages(userId, [
+                        buildSurveyFlexMessage(
                           pi.survey_id,
-                          (nextQ as { id: string }).id,
-                          (nextQ as { question_text: string }).question_text,
+                          nextQ.id,
+                          nextQ.question_text,
                           sortedChoices
-                        );
+                        ),
+                      ]);
+                    } else {
+                      const completionMessage = surveyRes2.data?.completion_message;
+                      if (completionMessage && completionMessage.trim()) {
+                        await pushMessage(userId, completionMessage);
                       }
                     }
                   } catch (nextErr) {
-                    console.error("自由記入後の次質問送信エラー:", nextErr);
+                    console.error("自由記入後の次質問/完了送信エラー:", nextErr);
                   }
                 }
               } else {

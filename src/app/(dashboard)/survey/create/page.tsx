@@ -87,6 +87,7 @@ function SurveyCreateInner() {
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [completionMessage, setCompletionMessage] = useState("");
   const [questions, setQuestions] = useState<Question[]>([
     {
       id: "q1",
@@ -114,6 +115,7 @@ function SurveyCreateInner() {
         if (d.survey) {
           setTitle(d.survey.title || "");
           setDescription(d.survey.description || "");
+          setCompletionMessage(d.survey.completionMessage || "");
           if (d.survey.questions && d.survey.questions.length > 0) {
             setQuestions(d.survey.questions);
           }
@@ -226,7 +228,7 @@ function SurveyCreateInner() {
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, questions }),
+        body: JSON.stringify({ title, description, completionMessage, questions }),
       });
       const data = await res.json();
 
@@ -264,7 +266,7 @@ function SurveyCreateInner() {
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, questions }),
+        body: JSON.stringify({ title, description, completionMessage, questions }),
       });
       const data = await res.json();
 
@@ -387,6 +389,21 @@ function SurveyCreateInner() {
               placeholder="アンケートの目的など"
               rows={2}
             />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">
+              全質問回答完了時のメッセージ（任意）
+            </label>
+            <Textarea
+              value={completionMessage}
+              onChange={(e) => setCompletionMessage(e.target.value)}
+              placeholder="例：アンケートに答えていただきありがとうございます😊"
+              rows={3}
+            />
+            <p className="text-xs text-muted-foreground">
+              最後の質問に回答した瞬間に、このメッセージが自動送信されます。
+              空のままだと何も送られません。
+            </p>
           </div>
         </CardContent>
       </Card>
