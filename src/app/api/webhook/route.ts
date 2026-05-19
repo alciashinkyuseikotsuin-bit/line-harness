@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { getUserProfile, pushMessage, multicastMessage } from "@/lib/line";
+import { getUserProfile, pushMessage, multicastMessage, sendSurveyMessage } from "@/lib/line";
 import { enrollMatchingStepFlows } from "@/lib/step-enrollment";
 
 // LINE署名検証
@@ -130,8 +130,12 @@ export async function POST(request: NextRequest) {
                 }
 
                 // 自由記入チェック（isFreeInput フラグ）
-                if (choice.broadcast_message && choice.tag.includes("その他")) {
+                const isFreeInputChoice =
+                  choice.broadcast_message && choice.tag.includes("その他");
+
+                if (isFreeInputChoice) {
                   // 「その他」選択 → 自由記入待ち状態にする
+                  // 次質問送信は自由記入完了後（message event 側）で行う
                   await supabase
                     .from("friends")
                     .update({
@@ -139,6 +143,8 @@ export async function POST(request: NextRequest) {
                         type: "free_tag",
                         base_tag: choice.tag.replace(":その他", ""),
                         prompt: choice.broadcast_message,
+                        survey_id: surveyId,
+                        question_id: questionId,
                       },
                     })
                     .eq("id", friend.id);
@@ -150,6 +156,64 @@ export async function POST(request: NextRequest) {
 
                 // 更新後タグセットでステップフローのトリガーチェック（複数タグ + AND/OR対応）
                 await enrollMatchingStepFlows(supabase, friend.id, updatedTags);
+
+                // 自由記入待ちの場合は次質問を送らない（message event 側で送る）
+                if (isFreeInputChoice) {
+                  break;
+                }
+
+                // 次の質問を送る（同じアンケート内で sort_order が今より大きい未回答のうち最小）
+                try {
+                  const { data: currentQ } = await supabase
+                    .from("survey_questions")
+                    .select("sort_order")
+                    .eq("id", questionId)
+                    .single();
+
+                  if (currentQ) {
+                    const { data: nextQuestions } = await supabase
+                      .from("survey_questions")
+                      .select(
+                        `id, question_text, sort_order,
+                         survey_choices ( id, choice_text, sort_order )`
+                      )
+                      .eq("survey_id", surveyId)
+                      .gt("sort_order", currentQ.sort_order)
+                      .order("sort_order", { ascending: true });
+
+                    // この友だちが既に回答済みの question_id を取得
+                    const { data: answered } = await supabase
+                      .from("survey_responses")
+                      .select("question_id")
+                      .eq("survey_id", surveyId)
+                      .eq("friend_id", friend.id);
+                    const answeredIds = new Set(
+                      (answered || []).map((a: { question_id: string }) => a.question_id)
+                    );
+
+                    const nextQ = (nextQuestions || []).find(
+                      (q: { id: string }) => !answeredIds.has(q.id)
+                    );
+
+                    if (nextQ) {
+                      const sortedChoices = ((nextQ as unknown as {
+                        survey_choices: { id: string; choice_text: string; sort_order: number }[];
+                      }).survey_choices || [])
+                        .sort((a, b) => a.sort_order - b.sort_order)
+                        .map((c) => ({ id: c.id, text: c.choice_text }));
+
+                      await sendSurveyMessage(
+                        pbUserId,
+                        surveyId,
+                        (nextQ as { id: string }).id,
+                        (nextQ as { question_text: string }).question_text,
+                        sortedChoices
+                      );
+                    }
+                  }
+                } catch (nextErr) {
+                  console.error("次質問送信エラー:", nextErr);
+                }
               }
             }
           }
@@ -194,6 +258,70 @@ export async function POST(request: NextRequest) {
                   .eq("id", existing.id);
 
                 await pushMessage(userId, `「${inputText}」で登録しました！ありがとうございます。`);
+
+                // 更新後タグセットでステップフローのトリガー再評価
+                await enrollMatchingStepFlows(supabase, existing.id, updatedTags);
+
+                // 自由記入が含まれていたアンケートの次質問を送る
+                const pi = existing.pending_input as {
+                  type: string;
+                  survey_id?: string;
+                  question_id?: string;
+                };
+                if (pi.survey_id && pi.question_id) {
+                  try {
+                    const { data: currentQ } = await supabase
+                      .from("survey_questions")
+                      .select("sort_order")
+                      .eq("id", pi.question_id)
+                      .single();
+
+                    if (currentQ) {
+                      const { data: nextQuestions } = await supabase
+                        .from("survey_questions")
+                        .select(
+                          `id, question_text, sort_order,
+                           survey_choices ( id, choice_text, sort_order )`
+                        )
+                        .eq("survey_id", pi.survey_id)
+                        .gt("sort_order", currentQ.sort_order)
+                        .order("sort_order", { ascending: true });
+
+                      const { data: answered } = await supabase
+                        .from("survey_responses")
+                        .select("question_id")
+                        .eq("survey_id", pi.survey_id)
+                        .eq("friend_id", existing.id);
+                      const answeredIds = new Set(
+                        (answered || []).map(
+                          (a: { question_id: string }) => a.question_id
+                        )
+                      );
+
+                      const nextQ = (nextQuestions || []).find(
+                        (q: { id: string }) => !answeredIds.has(q.id)
+                      );
+
+                      if (nextQ) {
+                        const sortedChoices = ((nextQ as unknown as {
+                          survey_choices: { id: string; choice_text: string; sort_order: number }[];
+                        }).survey_choices || [])
+                          .sort((a, b) => a.sort_order - b.sort_order)
+                          .map((c) => ({ id: c.id, text: c.choice_text }));
+
+                        await sendSurveyMessage(
+                          userId,
+                          pi.survey_id,
+                          (nextQ as { id: string }).id,
+                          (nextQ as { question_text: string }).question_text,
+                          sortedChoices
+                        );
+                      }
+                    }
+                  } catch (nextErr) {
+                    console.error("自由記入後の次質問送信エラー:", nextErr);
+                  }
+                }
               } else {
                 // 通常：最終アクティブ更新 + pending_inputクリア不要
                 await supabase

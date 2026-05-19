@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,7 +71,20 @@ const TEMPLATES: Record<string, { title: string; description: string; questions:
 };
 
 export default function SurveyCreatePage() {
+  // useSearchParams を使うため Suspense でラップ（Next.js の SSR/static generation 制約対応）
+  return (
+    <Suspense fallback={<p className="text-sm text-muted-foreground">読み込み中...</p>}>
+      <SurveyCreateInner />
+    </Suspense>
+  );
+}
+
+function SurveyCreateInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("id");
+  const isEditMode = !!editId;
+
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [questions, setQuestions] = useState<Question[]>([
@@ -89,7 +102,28 @@ export default function SurveyCreatePage() {
   const [sending, setSending] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [showAllConfirm, setShowAllConfirm] = useState(false);
-  const [savedSurveyId, setSavedSurveyId] = useState<string | null>(null);
+  const [savedSurveyId, setSavedSurveyId] = useState<string | null>(editId);
+  const [loadingEdit, setLoadingEdit] = useState(isEditMode);
+
+  // 編集モード: 既存データを読み込む
+  useEffect(() => {
+    if (!editId) return;
+    fetch(`/api/surveys/${editId}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.survey) {
+          setTitle(d.survey.title || "");
+          setDescription(d.survey.description || "");
+          if (d.survey.questions && d.survey.questions.length > 0) {
+            setQuestions(d.survey.questions);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("アンケート読み込み失敗:", err);
+      })
+      .finally(() => setLoadingEdit(false));
+  }, [editId]);
 
   function applyTemplate(key: string) {
     const t = TEMPLATES[key];
@@ -174,7 +208,7 @@ export default function SurveyCreatePage() {
     );
   }
 
-  // 下書き保存のみ
+  // 下書き保存（編集モードならPATCH、新規ならPOST）
   async function saveDraft() {
     if (!title.trim()) {
       alert("アンケート名を入力してください");
@@ -187,8 +221,10 @@ export default function SurveyCreatePage() {
 
     setSaving(true);
     try {
-      const res = await fetch("/api/surveys", {
-        method: "POST",
+      const url = editId ? `/api/surveys/${editId}` : "/api/surveys";
+      const method = editId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, description, questions }),
       });
@@ -199,7 +235,7 @@ export default function SurveyCreatePage() {
         return;
       }
 
-      setSavedSurveyId(data.survey?.id || null);
+      setSavedSurveyId(editId || data.survey?.id || null);
       router.push("/survey");
     } catch {
       alert("エラーが発生しました");
@@ -222,9 +258,11 @@ export default function SurveyCreatePage() {
     setSending(true);
     setTestResult(null);
     try {
-      // まず保存
-      const res = await fetch("/api/surveys", {
-        method: "POST",
+      // まず保存（編集モードならPATCH、新規ならPOST）
+      const url = editId ? `/api/surveys/${editId}` : "/api/surveys";
+      const method = editId ? "PATCH" : "POST";
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, description, questions }),
       });
@@ -235,7 +273,7 @@ export default function SurveyCreatePage() {
         return;
       }
 
-      const surveyId = data.survey?.id;
+      const surveyId = editId || data.survey?.id;
       setSavedSurveyId(surveyId);
 
       if (surveyId) {
@@ -298,7 +336,12 @@ export default function SurveyCreatePage() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">アンケート作成</h1>
+        <h1 className="text-2xl font-bold">
+          {isEditMode ? "アンケート編集" : "アンケート作成"}
+        </h1>
+        {loadingEdit && (
+          <span className="text-xs text-muted-foreground">読み込み中...</span>
+        )}
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_auto]">

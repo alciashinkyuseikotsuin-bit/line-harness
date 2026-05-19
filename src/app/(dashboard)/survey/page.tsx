@@ -12,8 +12,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, ClipboardList, Send } from "lucide-react";
+import { Plus, ClipboardList, Send, Edit2, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 type Choice = {
   id: string;
@@ -52,16 +53,30 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function SurveyListPage() {
+  const router = useRouter();
   const [surveys, setSurveys] = useState<Survey[]>([]);
   const [loading, setLoading] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  useEffect(() => {
+  function loadSurveys() {
     fetch("/api/surveys")
       .then((r) => r.json())
       .then((d) => setSurveys(d.surveys || []))
       .catch(console.error)
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadSurveys();
   }, []);
+
+  async function deleteSurvey(id: string) {
+    const res = await fetch(`/api/surveys/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setConfirmDelete(null);
+      loadSurveys();
+    }
+  }
 
   const totalResponses = surveys.reduce(
     (s, sv) => s + (sv.response_count || 0),
@@ -150,6 +165,7 @@ export default function SurveyListPage() {
                   <TableRow
                     key={sv.id}
                     className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => router.push(`/survey/create?id=${sv.id}`)}
                   >
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -191,15 +207,50 @@ export default function SurveyListPage() {
                     <TableCell>
                       <StatusBadge status={sv.status} />
                     </TableCell>
-                    <TableCell>
-                      {sv.status === "active" && (
-                        <Link href="/broadcast/segment">
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <Link href={`/survey/create?id=${sv.id}`}>
                           <Button size="sm" variant="outline">
-                            <Send className="h-3 w-3 mr-1" />
-                            配信
+                            <Edit2 className="h-3 w-3 mr-1" />
+                            編集
                           </Button>
                         </Link>
-                      )}
+                        {sv.status === "active" && (
+                          <Link href="/broadcast/segment">
+                            <Button size="sm" variant="outline">
+                              <Send className="h-3 w-3 mr-1" />
+                              配信
+                            </Button>
+                          </Link>
+                        )}
+                        {confirmDelete === sv.id ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setConfirmDelete(null)}
+                            >
+                              キャンセル
+                            </Button>
+                            <Button
+                              size="sm"
+                              className="bg-red-600 hover:bg-red-700 text-white"
+                              onClick={() => deleteSurvey(sv.id)}
+                            >
+                              削除する
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setConfirmDelete(sv.id)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
