@@ -98,16 +98,14 @@ export async function multicastMessages(userIds: string[], messages: any[]) {
   });
 }
 
-// アンケートをFlex Messageで送信
-export async function sendSurveyMessage(
-  userId: string,
+// アンケート Flex Message を構築（送信せずに返すのみ）
+// broadcast/multicast から再利用するため抽出
+export function buildSurveyFlexMessage(
   surveyId: string,
   questionId: string,
   questionText: string,
   choices: { id: string; text: string }[]
 ) {
-  const client = getLineClient();
-
   const buttons = choices.map((c) => ({
     type: "button" as const,
     action: {
@@ -121,48 +119,60 @@ export async function sendSurveyMessage(
     margin: "sm" as const,
   }));
 
+  return {
+    type: "flex" as const,
+    altText: `アンケート: ${questionText}`,
+    contents: {
+      type: "bubble" as const,
+      header: {
+        type: "box" as const,
+        layout: "vertical" as const,
+        contents: [
+          {
+            type: "text" as const,
+            text: "アンケート",
+            size: "sm" as const,
+            color: "#06C755",
+            weight: "bold" as const,
+          },
+        ],
+      },
+      body: {
+        type: "box" as const,
+        layout: "vertical" as const,
+        contents: [
+          {
+            type: "text" as const,
+            text: questionText,
+            size: "md" as const,
+            weight: "bold" as const,
+            wrap: true,
+          },
+        ],
+      },
+      footer: {
+        type: "box" as const,
+        layout: "vertical" as const,
+        spacing: "sm" as const,
+        contents: buttons,
+      },
+    },
+  };
+}
+
+// アンケートをFlex Messageで送信
+export async function sendSurveyMessage(
+  userId: string,
+  surveyId: string,
+  questionId: string,
+  questionText: string,
+  choices: { id: string; text: string }[]
+) {
+  const client = getLineClient();
   return client.pushMessage({
     to: userId,
     messages: [
-      {
-        type: "flex",
-        altText: `アンケート: ${questionText}`,
-        contents: {
-          type: "bubble",
-          header: {
-            type: "box",
-            layout: "vertical",
-            contents: [
-              {
-                type: "text",
-                text: "アンケート",
-                size: "sm",
-                color: "#06C755",
-                weight: "bold",
-              },
-            ],
-          },
-          body: {
-            type: "box",
-            layout: "vertical",
-            contents: [
-              {
-                type: "text",
-                text: questionText,
-                size: "md",
-                weight: "bold",
-                wrap: true,
-              },
-            ],
-          },
-          footer: {
-            type: "box",
-            layout: "vertical",
-            spacing: "sm",
-            contents: buttons,
-          },
-        },
-      },
+      buildSurveyFlexMessage(surveyId, questionId, questionText, choices),
     ],
   });
 }

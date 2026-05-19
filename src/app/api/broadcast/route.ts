@@ -5,8 +5,8 @@ import {
   broadcastMessages,
   multicastMessage,
   multicastMessages,
-  blocksToLineMessages,
 } from "@/lib/line";
+import { blocksToLineMessagesAsync } from "@/lib/blocks-to-line";
 import type { MessageBlock } from "@/types/blocks";
 
 // 配信一覧取得
@@ -35,16 +35,16 @@ export async function POST(request: NextRequest) {
   try {
     let deliveredCount = 0;
 
-    // ブロック配列からLINEメッセージを生成（新API）
+    // ブロック配列からLINEメッセージを生成（survey ブロックは DB から展開するので非同期）
     // blocksがない場合はmessageから単一テキストメッセージ（後方互換）
     const lineMessages = blocks
-      ? blocksToLineMessages(blocks as MessageBlock[])
+      ? await blocksToLineMessagesAsync(blocks as MessageBlock[], supabase)
       : null;
 
     if (targetType === "all") {
       // 全友だちに一斉配信
       if (lineMessages && lineMessages.length > 0) {
-        await broadcastMessages(lineMessages);
+        await broadcastMessages(lineMessages as any[]);
       } else if (message) {
         await broadcastMessage(message);
       }
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
         for (let i = 0; i < userIds.length; i += 500) {
           const chunk = userIds.slice(i, i + 500);
           if (lineMessages && lineMessages.length > 0) {
-            await multicastMessages(chunk, lineMessages);
+            await multicastMessages(chunk, lineMessages as any[]);
           } else if (message) {
             await multicastMessage(chunk, message);
           }
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
         for (let i = 0; i < userIds.length; i += 500) {
           const chunk = userIds.slice(i, i + 500);
           if (lineMessages && lineMessages.length > 0) {
-            await multicastMessages(chunk, lineMessages);
+            await multicastMessages(chunk, lineMessages as any[]);
           } else if (message) {
             await multicastMessage(chunk, message);
           }
