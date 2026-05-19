@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Send, X, Loader2 } from "lucide-react";
+import { Plus, Send, X, Loader2, Tag, Users } from "lucide-react";
 import { LinePreview } from "@/components/line-preview";
 import { MessageBlockEditor } from "@/components/message-block-editor";
 import type { MessageBlock } from "@/types/blocks";
@@ -48,6 +48,8 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+type TagInfo = { name: string; count: number };
+
 export default function BroadcastPage() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +62,13 @@ export default function BroadcastPage() {
   const [friendCount, setFriendCount] = useState(0);
   const [testDone, setTestDone] = useState(false);
   const [surveys, setSurveys] = useState<{ id: string; title: string }[]>([]);
+  const [targetMode, setTargetMode] = useState<"all" | "tags">("all");
+  const [allTags, setAllTags] = useState<TagInfo[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [matchCount, setMatchCount] = useState(0);
+  const [friendsWithTags, setFriendsWithTags] = useState<
+    { tags: string[] | null }[]
+  >([]);
 
   useEffect(() => {
     fetch("/api/broadcast")
@@ -70,7 +79,11 @@ export default function BroadcastPage() {
 
     fetch("/api/friends")
       .then((r) => r.json())
-      .then((d) => setFriendCount((d.friends || []).length));
+      .then((d) => {
+        const friends = d.friends || [];
+        setFriendCount(friends.length);
+        setFriendsWithTags(friends);
+      });
 
     fetch("/api/surveys")
       .then((r) => r.json())
@@ -80,7 +93,30 @@ export default function BroadcastPage() {
         )
       )
       .catch(() => {});
+
+    fetch("/api/tags")
+      .then((r) => r.json())
+      .then((d) => setAllTags(d.details || []))
+      .catch(() => {});
   }, []);
+
+  // 選択タグに応じてマッチ人数を再計算
+  useEffect(() => {
+    if (selectedTags.length === 0 || friendsWithTags.length === 0) {
+      setMatchCount(0);
+      return;
+    }
+    const matched = friendsWithTags.filter((f) =>
+      selectedTags.some((t) => (f.tags || []).includes(t))
+    );
+    setMatchCount(matched.length);
+  }, [selectedTags, friendsWithTags]);
+
+  function toggleTag(tag: string) {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  }
 
   const hasContent = blocks.some((b) => {
     if (b.type === "text") return b.text?.trim();
@@ -121,23 +157,32 @@ export default function BroadcastPage() {
     }
   }
 
-  // 本配信（全員）
+  // 本配信（全員 or タグ絞り）
   async function sendBroadcast() {
     if (!testDone) {
       alert("先にテスト配信を行ってください");
       return;
     }
+    if (targetMode === "tags" && selectedTags.length === 0) {
+      alert("配信対象タグを1つ以上選択してください");
+      return;
+    }
     setSending(true);
     setResult(null);
     try {
+      const payload: Record<string, unknown> = {
+        title: title || "一斉配信",
+        blocks,
+        targetType: targetMode === "tags" ? "segment" : "all",
+      };
+      if (targetMode === "tags") {
+        payload.targetTags = selectedTags;
+      }
+
       const res = await fetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title || "一斉配信",
-          blocks,
-          targetType: "all",
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok) {
@@ -147,6 +192,8 @@ export default function BroadcastPage() {
         setTitle("");
         setBlocks([createBlock("text")]);
         setTestDone(false);
+        setTargetMode("all");
+        setSelectedTags([]);
         const listRes = await fetch("/api/broadcast");
         const listData = await listRes.json();
         setBroadcasts(listData.broadcasts || []);
@@ -211,12 +258,94 @@ export default function BroadcastPage() {
                     surveys={surveys}
                   />
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  配信対象: 全友だち（{friendCount}人）
+
+                {/* 配信対象 */}
+                <div className="space-y-3 rounded-lg border p-4 bg-muted/20">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <label className="text-sm font-medium">配信対象</label>
+                    <div className="flex items-center gap-1 rounded-md border bg-background p-0.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTargetMode("all");
+                          setSelectedTags([]);
+                        }}
+                        className={`px-2 py-1 rounded ${
+                          targetMode === "all"
+                            ? "bg-[#06C755] text-white"
+                            : "text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        全員
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTargetMode("tags")}
+                        className={`px-2 py-1 rounded ${
+                          targetMode === "tags"
+                            ? "bg-[#06C755] text-white"
+                            : "text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        タグで絞る
+                      </button>
+                    </div>
+                  </div>
+
+                  {targetMode === "all" ? (
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Users className="h-4 w-4" />
+                      全友だち（{friendCount}人）に配信
+                    </p>
+                  ) : (
+                    <>
+                      {allTags.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          タグがまだありません。タグ管理画面で作成するか、アンケート回答で自動付与されると選択できます。
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {allTags.map((tag) => (
+                            <button
+                              key={tag.name}
+                              type="button"
+                              onClick={() => toggleTag(tag.name)}
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                                selectedTags.includes(tag.name)
+                                  ? "border-[#06C755] bg-[#06C755]/10 text-[#06C755]"
+                                  : "border-muted-foreground/30 hover:border-[#06C755]/50"
+                              }`}
+                            >
+                              <Tag className="h-3 w-3" />
+                              {tag.name}
+                              <span className="text-[10px] text-muted-foreground">
+                                {tag.count}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {selectedTags.length > 0 && (
+                        <div className="flex items-center gap-2 rounded-md bg-background px-3 py-2 border">
+                          <Users className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm font-medium">
+                            対象: {matchCount}人
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            （いずれかのタグにマッチ）
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
+
                 <Button
                   className="w-full bg-[#06C755] hover:bg-[#05b34c]"
-                  disabled={!hasContent}
+                  disabled={
+                    !hasContent ||
+                    (targetMode === "tags" && selectedTags.length === 0)
+                  }
                   onClick={() => setShowConfirm(true)}
                 >
                   <Send className="h-4 w-4 mr-2" />
@@ -238,9 +367,18 @@ export default function BroadcastPage() {
               <div className="space-y-3 mb-6">
                 <div>
                   <span className="text-sm text-muted-foreground">対象:</span>
-                  <span className="ml-2 font-medium">
-                    全友だち（{friendCount}人）
-                  </span>
+                  {targetMode === "all" ? (
+                    <span className="ml-2 font-medium">
+                      全友だち（{friendCount}人）
+                    </span>
+                  ) : (
+                    <span className="ml-2 font-medium">
+                      タグ絞り込み（{matchCount}人）
+                      <span className="text-xs text-muted-foreground ml-1">
+                        ［{selectedTags.join(", ")}］
+                      </span>
+                    </span>
+                  )}
                 </div>
                 {title && (
                   <div>

@@ -10,6 +10,7 @@ import {
   PieChart,
   Send,
   Settings,
+  Tag,
   Users,
 } from "lucide-react";
 
@@ -49,6 +50,11 @@ const navBot = [
     label: "友だち一覧",
     href: "/bot/users",
     icon: Users,
+  },
+  {
+    label: "タグ管理",
+    href: "/tags",
+    icon: Tag,
   },
 ];
 

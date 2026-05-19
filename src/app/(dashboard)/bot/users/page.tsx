@@ -38,6 +38,14 @@ export default function UsersPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tagInput, setTagInput] = useState<Record<string, string>>({});
   const [showTagInput, setShowTagInput] = useState<string | null>(null);
+  const [allTags, setAllTags] = useState<string[]>([]);
+
+  function loadAllTags() {
+    fetch("/api/tags")
+      .then((r) => r.json())
+      .then((d) => setAllTags(d.tags || []))
+      .catch(() => {});
+  }
 
   function loadFriends() {
     const params = new URLSearchParams();
@@ -51,6 +59,7 @@ export default function UsersPage() {
 
   useEffect(() => {
     loadFriends();
+    loadAllTags();
     fetch("/api/friends/sync", { method: "POST" }).catch(() => {});
   }, []);
 
@@ -58,8 +67,8 @@ export default function UsersPage() {
     if (!loading) loadFriends();
   }, [search]);
 
-  async function addTag(friendId: string) {
-    const tag = tagInput[friendId]?.trim();
+  async function addTag(friendId: string, override?: string) {
+    const tag = (override ?? tagInput[friendId])?.trim();
     if (!tag) return;
     await fetch(`/api/friends/${friendId}/tags`, {
       method: "POST",
@@ -68,6 +77,7 @@ export default function UsersPage() {
     });
     setTagInput((prev) => ({ ...prev, [friendId]: "" }));
     setShowTagInput(null);
+    loadAllTags();
     loadFriends();
   }
 
@@ -336,31 +346,59 @@ export default function UsersPage() {
                           </Badge>
                         ))}
                         {showTagInput === user.id ? (
-                          <div className="flex items-center gap-1">
-                            <Input
-                              className="h-6 w-24 text-xs"
-                              placeholder="タグ名"
-                              value={tagInput[user.id] || ""}
-                              onChange={(e) =>
-                                setTagInput((prev) => ({
-                                  ...prev,
-                                  [user.id]: e.target.value,
-                                }))
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") addTag(user.id);
-                                if (e.key === "Escape") setShowTagInput(null);
-                              }}
-                              autoFocus
-                            />
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-6 w-6 p-0"
-                              onClick={() => addTag(user.id)}
-                            >
-                              <Plus className="h-3 w-3" />
-                            </Button>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1">
+                              <Input
+                                className="h-6 w-32 text-xs"
+                                placeholder="タグ名（既存から選択可）"
+                                list={`tags-suggestions-${user.id}`}
+                                value={tagInput[user.id] || ""}
+                                onChange={(e) =>
+                                  setTagInput((prev) => ({
+                                    ...prev,
+                                    [user.id]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") addTag(user.id);
+                                  if (e.key === "Escape") setShowTagInput(null);
+                                }}
+                                autoFocus
+                              />
+                              <datalist id={`tags-suggestions-${user.id}`}>
+                                {allTags
+                                  .filter((t) => !(user.tags || []).includes(t))
+                                  .map((t) => (
+                                    <option key={t} value={t} />
+                                  ))}
+                              </datalist>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 w-6 p-0"
+                                onClick={() => addTag(user.id)}
+                              >
+                                <Plus className="h-3 w-3" />
+                              </Button>
+                            </div>
+                            {allTags.filter((t) => !(user.tags || []).includes(t)).length > 0 && (
+                              <div className="flex flex-wrap gap-1 max-w-[260px]">
+                                {allTags
+                                  .filter((t) => !(user.tags || []).includes(t))
+                                  .slice(0, 8)
+                                  .map((t) => (
+                                    <button
+                                      key={t}
+                                      type="button"
+                                      onClick={() => addTag(user.id, t)}
+                                      className="inline-flex items-center gap-0.5 rounded-full border border-muted-foreground/30 px-1.5 py-0.5 text-[10px] hover:border-[#06C755] hover:text-[#06C755]"
+                                    >
+                                      <Plus className="h-2 w-2" />
+                                      {t}
+                                    </button>
+                                  ))}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <button

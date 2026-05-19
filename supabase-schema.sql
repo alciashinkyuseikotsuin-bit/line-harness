@@ -170,3 +170,16 @@ ALTER TABLE step_enrollments ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "service_role_all" ON step_flows FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "service_role_all" ON step_messages FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "service_role_all" ON step_enrollments FOR ALL USING (true) WITH CHECK (true);
+
+-- ===========================
+-- タグマスタ
+-- 友だちに付与されていないタグも管理画面で作成・選択できるようにするため独立
+-- ===========================
+CREATE TABLE tags (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "service_role_all" ON tags FOR ALL USING (true) WITH CHECK (true);
