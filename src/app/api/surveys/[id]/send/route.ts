@@ -48,13 +48,7 @@ export async function POST(
     );
   }
 
-  // 重複送信チェック
-  if (mode === "test" && survey.status === "test_sent") {
-    return NextResponse.json(
-      { error: "このアンケートは既にテスト配信済みです。全員に配信するか、新しいアンケートを作成してください。" },
-      { status: 400 }
-    );
-  }
+  // 重複送信チェック（本配信のみ。テスト配信は何度でも可能）
   if (mode === "all" && survey.status === "active") {
     return NextResponse.json(
       { error: "このアンケートは既に配信済みです。" },
@@ -119,13 +113,8 @@ export async function POST(
     }
   }
 
-  // ステータスを更新して重複送信を防止
-  if (mode === "test") {
-    await supabase
-      .from("surveys")
-      .update({ status: "test_sent", updated_at: new Date().toISOString() })
-      .eq("id", id);
-  } else if (mode === "all") {
+  // ステータス更新（本配信のみ active に切り替え。テスト配信は何度でもできるので status を変更しない）
+  if (mode === "all") {
     await supabase
       .from("surveys")
       .update({ status: "active", updated_at: new Date().toISOString() })

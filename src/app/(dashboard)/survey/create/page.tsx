@@ -589,11 +589,11 @@ function SurveyCreateInner() {
           variant="outline"
           className="border-[#06C755] text-[#06C755] hover:bg-[#06C755]/10"
           onClick={sendTest}
-          disabled={saving || sending || !!savedSurveyId}
+          disabled={saving || sending}
         >
           {sending && !showAllConfirm && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           <Send className="h-4 w-4 mr-2" />
-          {savedSurveyId ? "テスト配信済み ✓" : "テスト配信（堀優介のみ）"}
+          {savedSurveyId ? "もう一度テスト配信" : "テスト配信（堀優介のみ）"}
         </Button>
         <Button
           className="bg-[#06C755] hover:bg-[#05b34c]"
