@@ -458,98 +458,103 @@ export default function BroadcastPage() {
         <div className="rounded-md bg-muted px-4 py-3 text-sm">{result}</div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              配信回数
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{sentBroadcasts.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              総配信メッセージ数
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {totalDelivered.toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              全配信履歴
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{broadcasts.length}</div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* 統計・履歴はフォーム表示中は隠す（画面下が見切れるのを防ぐ） */}
+      {!showCreate && !showConfirm && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  配信回数
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{sentBroadcasts.length}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  総配信メッセージ数
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {totalDelivered.toLocaleString()}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  全配信履歴
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{broadcasts.length}</div>
+              </CardContent>
+            </Card>
+          </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              読み込み中...
-            </p>
-          ) : broadcasts.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              配信履歴がありません
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>タイトル</TableHead>
-                  <TableHead>配信日時</TableHead>
-                  <TableHead>対象</TableHead>
-                  <TableHead>配信数</TableHead>
-                  <TableHead>ステータス</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {broadcasts.map((b) => (
-                  <TableRow key={b.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Send className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium">{b.title}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {b.sent_at
-                        ? new Date(b.sent_at).toLocaleString("ja-JP")
-                        : "-"}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {b.target_type === "all"
-                        ? "全友だち"
-                        : b.target_type === "segment"
-                          ? "セグメント"
-                          : b.target_type}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {b.delivered_count > 0
-                        ? b.delivered_count.toLocaleString()
-                        : "-"}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={b.status} />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardContent className="pt-6">
+              {loading ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  読み込み中...
+                </p>
+              ) : broadcasts.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  配信履歴がありません
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>タイトル</TableHead>
+                      <TableHead>配信日時</TableHead>
+                      <TableHead>対象</TableHead>
+                      <TableHead>配信数</TableHead>
+                      <TableHead>ステータス</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {broadcasts.map((b) => (
+                      <TableRow key={b.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Send className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-medium">{b.title}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {b.sent_at
+                            ? new Date(b.sent_at).toLocaleString("ja-JP")
+                            : "-"}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {b.target_type === "all"
+                            ? "全友だち"
+                            : b.target_type === "segment"
+                              ? "セグメント"
+                              : b.target_type}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {b.delivered_count > 0
+                            ? b.delivered_count.toLocaleString()
+                            : "-"}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge status={b.status} />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
