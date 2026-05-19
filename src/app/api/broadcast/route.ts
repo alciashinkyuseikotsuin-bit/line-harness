@@ -28,9 +28,47 @@ export async function GET() {
 // 配信実行 or 下書き保存（saveAsDraft=true で送信せず保存のみ）
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { title, message, blocks, targetType, targetTags, targetChoiceId, saveAsDraft } = body;
+  const { title, message, blocks, targetType, targetTags, targetChoiceId, saveAsDraft, scheduledAt } = body;
 
   const supabase = getSupabaseAdmin();
+
+  // 予約配信モード: scheduledAt が未来時刻なら status='scheduled' で保存
+  if (scheduledAt) {
+    const scheduledDate = new Date(scheduledAt);
+    if (isNaN(scheduledDate.getTime())) {
+      return NextResponse.json({ error: "予約日時の形式が不正です" }, { status: 400 });
+    }
+    if (scheduledDate.getTime() <= Date.now()) {
+      return NextResponse.json({ error: "予約日時は現在より未来を指定してください" }, { status: 400 });
+    }
+
+    const messageText = Array.isArray(blocks)
+      ? blocks
+          .filter((b: { type: string; text?: string }) => b.type === "text" && b.text)
+          .map((b: { text: string }) => b.text)
+          .join("\n")
+      : (message || "");
+
+    const { data: broadcast, error } = await supabase
+      .from("broadcasts")
+      .insert({
+        title: title || "予約配信",
+        message_text: messageText,
+        message_blocks: blocks || null,
+        target_type: targetType || "all",
+        target_tags: Array.isArray(targetTags) ? targetTags : [],
+        target_choice_id: targetChoiceId || null,
+        status: "scheduled",
+        scheduled_at: scheduledDate.toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ broadcast, scheduled: true, scheduledAt: scheduledDate.toISOString() });
+  }
 
   // 下書き保存モード: 送信せずに status='draft' で保存
   if (saveAsDraft) {

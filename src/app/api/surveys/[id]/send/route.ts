@@ -113,11 +113,23 @@ export async function POST(
     }
   }
 
-  // ステータス更新（本配信のみ active に切り替え。テスト配信は何度でもできるので status を変更しない）
+  // ステータス更新と sent_count 加算
+  // mode='all' のみ active 化＋送信数加算（テスト配信は集計に含めない）
   if (mode === "all") {
+    // 現在の sent_count を取得して加算
+    const { data: currentSurvey } = await supabase
+      .from("surveys")
+      .select("sent_count")
+      .eq("id", id)
+      .single();
+    const prev = currentSurvey?.sent_count || 0;
     await supabase
       .from("surveys")
-      .update({ status: "active", updated_at: new Date().toISOString() })
+      .update({
+        status: "active",
+        sent_count: prev + sentCount,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", id);
   }
 

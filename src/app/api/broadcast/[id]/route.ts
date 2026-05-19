@@ -51,7 +51,20 @@ export async function PATCH(
     );
   }
 
-  const { title, blocks, targetType, targetTags } = body;
+  const { title, blocks, targetType, targetTags, scheduledAt } = body;
+
+  // 予約日時の検証（指定された場合のみ）
+  let scheduledAtIso: string | null = null;
+  if (scheduledAt) {
+    const d = new Date(scheduledAt);
+    if (isNaN(d.getTime())) {
+      return NextResponse.json({ error: "予約日時の形式が不正です" }, { status: 400 });
+    }
+    if (d.getTime() <= Date.now()) {
+      return NextResponse.json({ error: "予約日時は現在より未来を指定してください" }, { status: 400 });
+    }
+    scheduledAtIso = d.toISOString();
+  }
 
   const messageText = Array.isArray(blocks)
     ? blocks
@@ -60,15 +73,22 @@ export async function PATCH(
         .join("\n")
     : "";
 
+  const updatePayload: Record<string, unknown> = {
+    title: title || "",
+    message_text: messageText,
+    message_blocks: blocks || null,
+    target_type: targetType || "all",
+    target_tags: Array.isArray(targetTags) ? targetTags : [],
+  };
+  // 予約日時が指定されている場合は status を 'scheduled' に切り替え
+  if (scheduledAtIso) {
+    updatePayload.scheduled_at = scheduledAtIso;
+    updatePayload.status = "scheduled";
+  }
+
   const { error } = await supabase
     .from("broadcasts")
-    .update({
-      title: title || "",
-      message_text: messageText,
-      message_blocks: blocks || null,
-      target_type: targetType || "all",
-      target_tags: Array.isArray(targetTags) ? targetTags : [],
-    })
+    .update(updatePayload)
     .eq("id", id);
 
   if (error) {

@@ -1,7 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -12,236 +12,268 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Send, Users, ArrowRight } from "lucide-react";
-import Link from "next/link";
+import { Users, ClipboardList, Send, BarChart3 } from "lucide-react";
 
-const surveyResults = [
-  {
-    id: "sv1",
-    title: "初回カウンセリングアンケート",
-    totalResponses: 342,
-    questions: [
-      {
-        id: "q1",
-        text: "どのメニューに興味がありますか？",
-        choices: [
-          {
-            text: "カット",
-            tag: "カット希望",
-            count: 145,
-            percent: 42.4,
-            broadcastStatus: "sent",
-            broadcastTitle: "カットメニュー限定クーポン",
-          },
-          {
-            text: "カラー",
-            tag: "カラー希望",
-            count: 112,
-            percent: 32.7,
-            broadcastStatus: "sent",
-            broadcastTitle: "春のカラーキャンペーン",
-          },
-          {
-            text: "トリートメント",
-            tag: "トリートメント希望",
-            count: 85,
-            percent: 24.9,
-            broadcastStatus: "scheduled",
-            broadcastTitle: "トリートメント新メニュー案内",
-          },
-        ],
-      },
-      {
-        id: "q2",
-        text: "ご予算はどのくらいですか？",
-        choices: [
-          {
-            text: "5,000円以下",
-            tag: "予算:5千円以下",
-            count: 98,
-            percent: 28.7,
-            broadcastStatus: "sent",
-            broadcastTitle: "お手頃メニューのご案内",
-          },
-          {
-            text: "5,000〜10,000円",
-            tag: "予算:5千〜1万",
-            count: 156,
-            percent: 45.6,
-            broadcastStatus: "sent",
-            broadcastTitle: "人気スタンダードメニュー",
-          },
-          {
-            text: "10,000円以上",
-            tag: "予算:1万円以上",
-            count: 88,
-            percent: 25.7,
-            broadcastStatus: "none",
-            broadcastTitle: "",
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: "sv2",
-    title: "来店頻度アンケート",
-    totalResponses: 218,
-    questions: [
-      {
-        id: "q1",
-        text: "どのくらいの頻度で美容院に通いますか？",
-        choices: [
-          {
-            text: "月1回",
-            tag: "来店:月1",
-            count: 89,
-            percent: 40.8,
-            broadcastStatus: "sent",
-            broadcastTitle: "月1回リピーター様限定特典",
-          },
-          {
-            text: "2ヶ月に1回",
-            tag: "来店:2ヶ月",
-            count: 76,
-            percent: 34.9,
-            broadcastStatus: "scheduled",
-            broadcastTitle: "次回予約リマインド",
-          },
-          {
-            text: "3ヶ月以上",
-            tag: "来店:3ヶ月+",
-            count: 53,
-            percent: 24.3,
-            broadcastStatus: "none",
-            broadcastTitle: "",
-          },
-        ],
-      },
-    ],
-  },
-];
+type Choice = {
+  id: string;
+  text: string;
+  tag: string;
+  broadcastMessage: string | null;
+  count: number;
+  percent: number;
+};
 
-function BroadcastStatusBadge({ status }: { status: string }) {
-  if (status === "sent") {
-    return (
-      <Badge variant="secondary" className="bg-green-100 text-green-700">
-        配信済み
-      </Badge>
-    );
-  }
-  if (status === "scheduled") {
-    return (
-      <Badge variant="secondary" className="bg-blue-100 text-blue-700">
-        予約中
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="secondary" className="bg-gray-100 text-gray-500">
-      未設定
-    </Badge>
-  );
-}
+type Question = {
+  id: string;
+  text: string;
+  totalResponses: number;
+  choices: Choice[];
+};
+
+type SurveySummary = {
+  id: string;
+  title: string;
+  sentCount: number;
+  uniqueRespondents: number;
+  responseRate: number; // %
+  totalResponses: number;
+  status: string;
+};
+
+type DetailedResult = {
+  survey: SurveySummary;
+  questions: Question[];
+};
 
 export default function SurveyResultsPage() {
+  const [surveyList, setSurveyList] = useState<
+    {
+      id: string;
+      title: string;
+      status: string;
+      sent_count: number;
+      unique_respondents: number;
+      response_count: number;
+      response_rate: number;
+    }[]
+  >([]);
+  const [details, setDetails] = useState<DetailedResult[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const listRes = await fetch("/api/surveys");
+        const listData = await listRes.json();
+        const list = listData.surveys || [];
+        setSurveyList(list);
+
+        // 各サーベイの詳細を並列取得
+        const detailed = await Promise.all(
+          list.map(async (sv: { id: string }) => {
+            const r = await fetch(`/api/surveys/${sv.id}/results`);
+            return r.json();
+          })
+        );
+        setDetails(detailed.filter((d) => d.survey));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const totalSent = surveyList.reduce((s, sv) => s + (sv.sent_count || 0), 0);
+  const totalRespondents = surveyList.reduce(
+    (s, sv) => s + (sv.unique_respondents || 0),
+    0
+  );
+  const overallRate =
+    totalSent > 0 ? Math.round((totalRespondents / totalSent) * 1000) / 10 : 0;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div>
         <h1 className="text-2xl font-bold">回答結果</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          各アンケートの送信数・回答数・回答率を確認できます。
+        </p>
       </div>
 
-      {surveyResults.map((survey) => (
-        <Card key={survey.id}>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base">{survey.title}</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  総回答数: {survey.totalResponses.toLocaleString()}件
-                </p>
-              </div>
-            </div>
+      {/* 全体サマリ */}
+      <div className="grid gap-4 sm:grid-cols-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              アンケート数
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6">
-            {survey.questions.map((q, qi) => (
-              <div key={q.id} className="space-y-3">
-                {qi > 0 && <Separator />}
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary">Q{qi + 1}</Badge>
-                  <span className="text-sm font-medium">{q.text}</span>
-                </div>
-
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>選択肢</TableHead>
-                      <TableHead>回答数</TableHead>
-                      <TableHead>割合</TableHead>
-                      <TableHead>セグメントタグ</TableHead>
-                      <TableHead></TableHead>
-                      <TableHead>配信状況</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {q.choices.map((c) => (
-                      <TableRow key={c.text}>
-                        <TableCell className="font-medium">{c.text}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Users className="h-3 w-3 text-muted-foreground" />
-                            {c.count}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <div className="h-2 w-20 rounded-full bg-muted overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-[#06C755]"
-                                style={{ width: `${c.percent}%` }}
-                              />
-                            </div>
-                            <span className="text-sm">{c.percent}%</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-xs">
-                            {c.tag}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <BroadcastStatusBadge status={c.broadcastStatus} />
-                            {c.broadcastTitle && (
-                              <div className="text-xs text-muted-foreground">
-                                {c.broadcastTitle}
-                              </div>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {c.broadcastStatus === "none" && (
-                            <Link href="/broadcast">
-                              <Button size="sm" variant="outline">
-                                <Send className="h-3 w-3 mr-1" />
-                                配信作成
-                              </Button>
-                            </Link>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ))}
+          <CardContent>
+            <div className="text-2xl font-bold flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-muted-foreground" />
+              {surveyList.length}
+            </div>
           </CardContent>
         </Card>
-      ))}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              総送信数
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold flex items-center gap-2">
+              <Send className="h-5 w-5 text-muted-foreground" />
+              {totalSent.toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              総回答者数（実人数）
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold flex items-center gap-2">
+              <Users className="h-5 w-5 text-muted-foreground" />
+              {totalRespondents.toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              全体回答率
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold flex items-center gap-2 text-[#06C755]">
+              <BarChart3 className="h-5 w-5" />
+              {overallRate}%
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground text-center py-8">
+          読み込み中...
+        </p>
+      ) : details.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-sm text-muted-foreground">
+              まだアンケート結果がありません。アンケートを作成して配信してください。
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        details.map((d) => (
+          <Card key={d.survey.id}>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <CardTitle className="text-base">{d.survey.title}</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    送信 {d.survey.sentCount.toLocaleString()}人 ／ 回答者{" "}
+                    {d.survey.uniqueRespondents.toLocaleString()}人
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-bold text-[#06C755]">
+                    {d.survey.responseRate}%
+                  </div>
+                  <div className="text-xs text-muted-foreground">回答率</div>
+                </div>
+              </div>
+              {/* 回答率バー */}
+              <div className="mt-3 h-2 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-[#06C755] transition-all"
+                  style={{ width: `${Math.min(d.survey.responseRate, 100)}%` }}
+                />
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {d.questions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  質問がありません
+                </p>
+              ) : (
+                d.questions.map((q, qi) => (
+                  <div key={q.id} className="space-y-3">
+                    {qi > 0 && <Separator />}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="secondary">Q{qi + 1}</Badge>
+                      <span className="text-sm font-medium">{q.text}</span>
+                      <span className="text-xs text-muted-foreground ml-auto">
+                        この質問の回答: {q.totalResponses}件
+                      </span>
+                    </div>
+
+                    {q.choices.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        選択肢がありません
+                      </p>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>選択肢</TableHead>
+                            <TableHead className="w-[100px]">回答数</TableHead>
+                            <TableHead className="w-[200px]">割合</TableHead>
+                            <TableHead>付与タグ</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {q.choices.map((c) => (
+                            <TableRow key={c.id}>
+                              <TableCell className="font-medium">
+                                {c.text}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-1.5">
+                                  <Users className="h-3 w-3 text-muted-foreground" />
+                                  {c.count}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <div className="h-2 w-24 rounded-full bg-muted overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full bg-[#06C755]"
+                                      style={{ width: `${c.percent}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-sm tabular-nums w-12">
+                                    {c.percent}%
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                {c.tag ? (
+                                  <Badge variant="outline" className="text-xs">
+                                    {c.tag}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">
+                                    -
+                                  </span>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        ))
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Users, Tag, Send, X, Loader2 } from "lucide-react";
+import { Users, Tag, Send, X, Loader2, Clock } from "lucide-react";
 import { LinePreview } from "@/components/line-preview";
 import { MessageBlockEditor } from "@/components/message-block-editor";
 import type { MessageBlock } from "@/types/blocks";
@@ -28,6 +28,8 @@ export default function SegmentPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [testDone, setTestDone] = useState(false);
   const [surveys, setSurveys] = useState<{ id: string; title: string }[]>([]);
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [scheduling, setScheduling] = useState(false);
 
   useEffect(() => {
     fetch("/api/friends")
@@ -115,6 +117,48 @@ export default function SegmentPage() {
       setResult("❌ テスト配信に失敗しました");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function scheduleSegment() {
+    if (!scheduledAt) {
+      alert("予約日時を入力してください");
+      return;
+    }
+    if (selectedTags.length === 0 || !hasContent) {
+      alert("タグとメッセージを入力してください");
+      return;
+    }
+    setScheduling(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title || `セグメント予約（${selectedTags.join(", ")}）`,
+          blocks,
+          targetType: "segment",
+          targetTags: selectedTags,
+          scheduledAt: new Date(scheduledAt).toISOString(),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult(
+          `✅ ${new Date(scheduledAt).toLocaleString("ja-JP")} に配信予約しました`
+        );
+        setTitle("");
+        setBlocks([createBlock("text")]);
+        setSelectedTags([]);
+        setTestDone(false);
+        setShowConfirm(false);
+        setScheduledAt("");
+      } else {
+        setResult(`❌ ${data.error || "予約に失敗しました"}`);
+      }
+    } finally {
+      setScheduling(false);
     }
   }
 
@@ -265,6 +309,40 @@ export default function SegmentPage() {
                 surveys={surveys}
               />
             </div>
+            {/* 予約配信 */}
+            <div className="rounded-lg border p-3 bg-muted/20 space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1">
+                <Clock className="h-4 w-4" />
+                予約配信日時（任意）
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  className="border-blue-400 text-blue-600 hover:bg-blue-50"
+                  disabled={
+                    scheduling ||
+                    !scheduledAt ||
+                    selectedTags.length === 0 ||
+                    !hasContent
+                  }
+                  onClick={scheduleSegment}
+                >
+                  {scheduling ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Clock className="h-4 w-4 mr-2" />
+                  )}
+                  予約配信
+                </Button>
+              </div>
+            </div>
+
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -279,7 +357,7 @@ export default function SegmentPage() {
                 onClick={() => setShowConfirm(true)}
               >
                 <Send className="h-4 w-4 mr-2" />
-                配信内容を確認
+                すぐに配信
               </Button>
             </div>
           </CardContent>

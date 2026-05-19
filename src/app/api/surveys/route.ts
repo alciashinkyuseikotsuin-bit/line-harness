@@ -30,13 +30,23 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // 各アンケートの回答数を取得
+  // 各アンケートの回答数とユニーク回答者数を取得
   for (const survey of surveys || []) {
-    const { count } = await supabase
+    const { data: rs } = await supabase
       .from("survey_responses")
-      .select("*", { count: "exact", head: true })
+      .select("friend_id")
       .eq("survey_id", survey.id);
-    (survey as any).response_count = count || 0;
+    const responseCount = rs?.length || 0;
+    const uniqueRespondents = new Set(
+      (rs || []).map((r: { friend_id: string }) => r.friend_id)
+    ).size;
+    const sentCount = (survey as { sent_count?: number }).sent_count || 0;
+    (survey as Record<string, unknown>).response_count = responseCount;
+    (survey as Record<string, unknown>).unique_respondents = uniqueRespondents;
+    (survey as Record<string, unknown>).response_rate =
+      sentCount > 0
+        ? Math.round((uniqueRespondents / sentCount) * 1000) / 10
+        : 0;
   }
 
   return NextResponse.json({ surveys });

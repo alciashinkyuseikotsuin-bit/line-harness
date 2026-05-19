@@ -29,6 +29,8 @@ CREATE TABLE surveys (
   description TEXT,
   -- 全質問回答完了時にユーザーへ送るメッセージ（任意）
   completion_message TEXT,
+  -- 本配信の累計送信人数（回答率計算用）
+  sent_count INT NOT NULL DEFAULT 0,
   status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'closed')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

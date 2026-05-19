@@ -39,11 +39,16 @@ export async function GET(
     );
   }
 
-  // 回答データ取得
+  // 回答データ取得（friend_id 含めてユニーク回答者数を計算）
   const { data: responses } = await supabase
     .from("survey_responses")
-    .select("question_id, choice_id")
+    .select("question_id, choice_id, friend_id")
     .eq("survey_id", id);
+
+  // ユニーク回答者数（少なくとも1問でも回答した友だち数）
+  const uniqueRespondents = new Set(
+    (responses || []).map((r: { friend_id: string }) => r.friend_id)
+  ).size;
 
   // 質問ごとに集計
   const questions = (survey.survey_questions || [])
@@ -81,10 +86,19 @@ export async function GET(
       };
     });
 
+  const sentCount = survey.sent_count || 0;
+  const responseRate =
+    sentCount > 0
+      ? Math.round((uniqueRespondents / sentCount) * 1000) / 10
+      : 0;
+
   return NextResponse.json({
     survey: {
       id: survey.id,
       title: survey.title,
+      sentCount,
+      uniqueRespondents,
+      responseRate, // %
       totalResponses: (responses || []).length,
     },
     questions,

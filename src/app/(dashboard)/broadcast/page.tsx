@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Send, X, Loader2, Tag, Users, FileText, Trash2 } from "lucide-react";
+import { Plus, Send, X, Loader2, Tag, Users, FileText, Trash2, Clock } from "lucide-react";
 import { LinePreview } from "@/components/line-preview";
 import { MessageBlockEditor } from "@/components/message-block-editor";
 import type { MessageBlock } from "@/types/blocks";
@@ -23,9 +23,12 @@ type Broadcast = {
   id: string;
   title: string;
   message_text: string;
+  message_blocks?: MessageBlock[] | null;
   target_type: string;
+  target_tags?: string[];
   status: string;
   sent_at: string | null;
+  scheduled_at?: string | null;
   delivered_count: number;
   created_at: string;
 };
@@ -35,11 +38,13 @@ function StatusBadge({ status }: { status: string }) {
     sent: "bg-green-100 text-green-700",
     scheduled: "bg-blue-100 text-blue-700",
     draft: "bg-gray-100 text-gray-500",
+    failed: "bg-red-100 text-red-700",
   };
   const labels: Record<string, string> = {
     sent: "配信済み",
     scheduled: "予約中",
     draft: "下書き",
+    failed: "失敗",
   };
   return (
     <Badge variant="secondary" className={styles[status] || styles.draft}>
@@ -72,6 +77,8 @@ export default function BroadcastPage() {
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [scheduledAt, setScheduledAt] = useState(""); // datetime-local
+  const [scheduling, setScheduling] = useState(false);
 
   useEffect(() => {
     fetch("/api/broadcast")
@@ -128,6 +135,64 @@ export default function BroadcastPage() {
     setSelectedTags([]);
     setTestDone(false);
     setEditingDraftId(null);
+    setScheduledAt("");
+  }
+
+  async function schedule() {
+    if (!scheduledAt) {
+      alert("予約日時を入力してください");
+      return;
+    }
+    if (!hasContent) {
+      alert("メッセージを入力してください");
+      return;
+    }
+    if (targetMode === "tags" && selectedTags.length === 0) {
+      alert("配信対象タグを1つ以上選択してください");
+      return;
+    }
+    setScheduling(true);
+    setResult(null);
+    try {
+      const payload = {
+        title: title || "予約配信",
+        blocks,
+        targetType: targetMode === "tags" ? "segment" : "all",
+        targetTags: selectedTags,
+        scheduledAt: new Date(scheduledAt).toISOString(),
+      };
+      let res;
+      if (editingDraftId) {
+        // 編集中下書きを予約配信に切り替え
+        res = await fetch(`/api/broadcast/${editingDraftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch("/api/broadcast", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok) {
+        setResult(`❌ ${data.error || "予約に失敗しました"}`);
+        return;
+      }
+      setResult(
+        `✅ ${new Date(scheduledAt).toLocaleString("ja-JP")} に配信予約しました`
+      );
+      const listRes = await fetch("/api/broadcast");
+      const listData = await listRes.json();
+      setBroadcasts(listData.broadcasts || []);
+      setShowCreate(false);
+      setShowConfirm(false);
+      resetForm();
+    } finally {
+      setScheduling(false);
+    }
   }
 
   // 下書きを編集モードで開く
@@ -149,6 +214,16 @@ export default function BroadcastPage() {
     setTargetMode(b.target_type === "segment" ? "tags" : "all");
     setSelectedTags(Array.isArray(b.target_tags) ? b.target_tags : []);
     setTestDone(false);
+    // scheduled_at を datetime-local 形式 (YYYY-MM-DDTHH:mm) に変換
+    if (b.scheduled_at) {
+      const d = new Date(b.scheduled_at);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setScheduledAt(
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+      );
+    } else {
+      setScheduledAt("");
+    }
     setShowCreate(true);
     setShowConfirm(false);
   }
@@ -441,6 +516,43 @@ export default function BroadcastPage() {
                   )}
                 </div>
 
+                {/* 予約配信 */}
+                <div className="rounded-lg border p-3 bg-muted/20 space-y-2">
+                  <label className="text-sm font-medium flex items-center gap-1">
+                    <Clock className="h-4 w-4" />
+                    予約配信日時（任意）
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="datetime-local"
+                      value={scheduledAt}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      variant="outline"
+                      className="border-blue-400 text-blue-600 hover:bg-blue-50"
+                      disabled={
+                        scheduling ||
+                        !scheduledAt ||
+                        !hasContent ||
+                        (targetMode === "tags" && selectedTags.length === 0)
+                      }
+                      onClick={schedule}
+                    >
+                      {scheduling ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Clock className="h-4 w-4 mr-2" />
+                      )}
+                      予約配信
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    指定日時にバックグラウンドで自動送信されます。
+                  </p>
+                </div>
+
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
@@ -464,7 +576,7 @@ export default function BroadcastPage() {
                     onClick={() => setShowConfirm(true)}
                   >
                     <Send className="h-4 w-4 mr-2" />
-                    配信内容を確認
+                    すぐに配信
                   </Button>
                 </div>
               </div>
@@ -639,12 +751,14 @@ export default function BroadcastPage() {
                       <TableRow
                         key={b.id}
                         className={
-                          b.status === "draft"
+                          b.status === "draft" || b.status === "scheduled"
                             ? "cursor-pointer hover:bg-muted/50"
                             : ""
                         }
                         onClick={() => {
-                          if (b.status === "draft") openDraft(b);
+                          if (b.status === "draft" || b.status === "scheduled") {
+                            openDraft(b);
+                          }
                         }}
                       >
                         <TableCell>
@@ -654,9 +768,16 @@ export default function BroadcastPage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-sm">
-                          {b.sent_at
-                            ? new Date(b.sent_at).toLocaleString("ja-JP")
-                            : "-"}
+                          {b.sent_at ? (
+                            new Date(b.sent_at).toLocaleString("ja-JP")
+                          ) : b.scheduled_at ? (
+                            <span className="text-blue-600">
+                              {new Date(b.scheduled_at).toLocaleString("ja-JP")}{" "}
+                              予定
+                            </span>
+                          ) : (
+                            "-"
+                          )}
                         </TableCell>
                         <TableCell className="text-sm">
                           {b.target_type === "all"
