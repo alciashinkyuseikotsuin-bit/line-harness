@@ -149,20 +149,26 @@ export async function POST(request: NextRequest) {
 
               const choice = choiceRes.data;
 
-              if (choice?.tag) {
-                // タグ追加（既存に含まれていなければ）
+              // タグの有無に関わらず、回答が来たら次質問送信まで処理する
+              // （以前は if (choice?.tag) で囲っていたため、タグ無し選択肢=「いいえ」等で
+              //   次質問が送られないバグがあった）
+              if (choice) {
+                // タグ追加（タグが設定されている選択肢のみ）
                 const currentTags: string[] = currentFriendRes.data?.tags || [];
-                const updatedTags = currentTags.includes(choice.tag)
-                  ? currentTags
-                  : [...currentTags, choice.tag];
+                const updatedTags =
+                  choice.tag && !currentTags.includes(choice.tag)
+                    ? [...currentTags, choice.tag]
+                    : currentTags;
 
                 const isFreeInputChoice =
-                  !!choice.broadcast_message && choice.tag.includes("その他");
+                  !!choice.broadcast_message &&
+                  !!choice.tag &&
+                  choice.tag.includes("その他");
 
                 // バックグラウンドタスク（友だちレコード更新・ステップフロー登録）を即発火
                 // メッセージ送信前に await する必要がないので、Promise.all で並列実行する
                 const friendUpdate: Record<string, unknown> = {};
-                if (!currentTags.includes(choice.tag)) {
+                if (choice.tag && !currentTags.includes(choice.tag)) {
                   friendUpdate.tags = updatedTags;
                 }
                 if (isFreeInputChoice) {
