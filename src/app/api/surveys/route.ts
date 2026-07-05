@@ -55,9 +55,19 @@ export async function GET() {
 // アンケート作成
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { title, description, completionMessage, questions } = body;
+  const {
+    title,
+    description,
+    completionMessage,
+    questions,
+    surveyType,
+    diagnosisResults,
+  } = body;
 
   const supabase = getSupabaseAdmin();
+
+  // 種別（診断 or 通常アンケート）。未指定時は従来通り 'survey'
+  const normalizedSurveyType = surveyType === "diagnosis" ? "diagnosis" : "survey";
 
   // アンケート作成
   const { data: survey, error: surveyError } = await supabase
@@ -67,6 +77,7 @@ export async function POST(request: NextRequest) {
       description,
       completion_message: completionMessage || null,
       status: "draft",
+      survey_type: normalizedSurveyType,
     })
     .select()
     .single();
@@ -101,7 +112,40 @@ export async function POST(request: NextRequest) {
         tag: c.tag,
         broadcast_message: c.broadcastMessage || null,
         sort_order: ci,
+        diagnosis_points: c.diagnosisPoints || {},
       });
+    }
+  }
+
+  // 診断タイプ定義（診断コンテンツの場合のみ）
+  if (
+    normalizedSurveyType === "diagnosis" &&
+    Array.isArray(diagnosisResults) &&
+    diagnosisResults.length > 0
+  ) {
+    const rows = diagnosisResults
+      .filter((r: { typeKey?: string }) => r.typeKey && r.typeKey.trim())
+      .map(
+        (
+          r: {
+            typeKey: string;
+            title?: string;
+            resultMessage?: string;
+            addTag?: string;
+            sortOrder?: number;
+          },
+          i: number
+        ) => ({
+          survey_id: survey.id,
+          type_key: r.typeKey.trim(),
+          title: r.title || r.typeKey,
+          result_message: r.resultMessage || "",
+          add_tag: r.addTag || null,
+          sort_order: r.sortOrder ?? i,
+        })
+      );
+    if (rows.length > 0) {
+      await supabase.from("diagnosis_results").insert(rows);
     }
   }
 

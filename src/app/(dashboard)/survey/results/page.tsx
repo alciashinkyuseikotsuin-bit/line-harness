@@ -38,11 +38,22 @@ type SurveySummary = {
   responseRate: number; // %
   totalResponses: number;
   status: string;
+  surveyType?: "survey" | "diagnosis";
+  diagnosisCompletedCount?: number;
+};
+
+type DiagnosisDistributionItem = {
+  typeKey: string;
+  title: string;
+  addTag: string | null;
+  count: number;
+  percent: number;
 };
 
 type DetailedResult = {
   survey: SurveySummary;
   questions: Question[];
+  diagnosisDistribution?: DiagnosisDistributionItem[];
 };
 
 export default function SurveyResultsPage() {
@@ -174,7 +185,14 @@ export default function SurveyResultsPage() {
             <CardHeader>
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
-                  <CardTitle className="text-base">{d.survey.title}</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-base">{d.survey.title}</CardTitle>
+                    {d.survey.surveyType === "diagnosis" && (
+                      <Badge className="text-xs bg-purple-100 text-purple-700">
+                        診断コンテンツ
+                      </Badge>
+                    )}
+                  </div>
                   <p className="text-sm text-muted-foreground mt-1">
                     送信 {d.survey.sentCount.toLocaleString()}人 ／ 回答者{" "}
                     {d.survey.uniqueRespondents.toLocaleString()}人
@@ -196,6 +214,68 @@ export default function SurveyResultsPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
+              {d.survey.surveyType === "diagnosis" && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium">🎯 診断結果分布</span>
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      診断完了: {(d.survey.diagnosisCompletedCount || 0).toLocaleString()}人
+                    </span>
+                  </div>
+                  {!d.diagnosisDistribution || d.diagnosisDistribution.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      診断タイプが未設定、またはまだ診断完了者がいません
+                    </p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>タイプ</TableHead>
+                          <TableHead className="w-[100px]">人数</TableHead>
+                          <TableHead className="w-[200px]">割合</TableHead>
+                          <TableHead>付与タグ</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {d.diagnosisDistribution.map((t) => (
+                          <TableRow key={t.typeKey}>
+                            <TableCell className="font-medium">{t.title}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1.5">
+                                <Users className="h-3 w-3 text-muted-foreground" />
+                                {t.count}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 w-24 rounded-full bg-muted overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-purple-500"
+                                    style={{ width: `${t.percent}%` }}
+                                  />
+                                </div>
+                                <span className="text-sm tabular-nums w-12">
+                                  {t.percent}%
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {t.addTag ? (
+                                <Badge variant="outline" className="text-xs">
+                                  {t.addTag}
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">-</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  <Separator />
+                </div>
+              )}
               {d.questions.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   質問がありません

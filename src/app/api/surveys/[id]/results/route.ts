@@ -92,6 +92,90 @@ export async function GET(
       ? Math.round((uniqueRespondents / sentCount) * 1000) / 10
       : 0;
 
+  // 診断コンテンツの場合、診断結果分布（各タイプ何人か）を集計する
+  const surveyType = survey.survey_type || "survey";
+  let diagnosisDistribution: {
+    typeKey: string;
+    title: string;
+    addTag: string | null;
+    count: number;
+    percent: number;
+  }[] = [];
+  let diagnosisCompletedCount = 0;
+
+  if (surveyType === "diagnosis") {
+    const { data: diagnosisResultRows } = await supabase
+      .from("diagnosis_results")
+      .select("type_key, title, add_tag, sort_order")
+      .eq("survey_id", id)
+      .order("sort_order", { ascending: true });
+
+    const { data: scoreResponses } = await supabase
+      .from("survey_responses")
+      .select("friend_id, question_id, choice_id, survey_choices ( diagnosis_points )")
+      .eq("survey_id", id);
+
+    const totalQuestionCount = questions.length;
+
+    // 友だちごとに「回答済み質問セット」と「タイプ別合計点」を集計
+    const perFriend = new Map<
+      string,
+      { questionIds: Set<string>; scores: Record<string, number> }
+    >();
+    for (const r of scoreResponses || []) {
+      const row = r as unknown as {
+        friend_id: string;
+        question_id: string;
+        survey_choices: { diagnosis_points: Record<string, number> | null } | null;
+      };
+      let entry = perFriend.get(row.friend_id);
+      if (!entry) {
+        entry = { questionIds: new Set(), scores: {} };
+        perFriend.set(row.friend_id, entry);
+      }
+      entry.questionIds.add(row.question_id);
+      const pts = row.survey_choices?.diagnosis_points || {};
+      for (const [typeKey, val] of Object.entries(pts)) {
+        const n = Number(val);
+        if (!Number.isFinite(n)) continue;
+        entry.scores[typeKey] = (entry.scores[typeKey] || 0) + n;
+      }
+    }
+
+    const results = diagnosisResultRows || [];
+    const counts: Record<string, number> = {};
+    for (const [, entry] of perFriend) {
+      // 全問回答済みの友だちのみ「診断完了」として集計（Webhook側の送信条件と揃える）
+      if (totalQuestionCount === 0 || entry.questionIds.size < totalQuestionCount) continue;
+
+      const typeKeys = Object.keys(entry.scores);
+      if (typeKeys.length === 0 || results.length === 0) continue;
+
+      const maxScore = Math.max(...typeKeys.map((k) => entry.scores[k]));
+      const winner = results.find(
+        (res) => entry.scores[res.type_key] !== undefined && entry.scores[res.type_key] === maxScore
+      );
+      if (!winner) continue;
+
+      diagnosisCompletedCount += 1;
+      counts[winner.type_key] = (counts[winner.type_key] || 0) + 1;
+    }
+
+    diagnosisDistribution = results.map((r) => {
+      const count = counts[r.type_key] || 0;
+      return {
+        typeKey: r.type_key,
+        title: r.title,
+        addTag: r.add_tag || null,
+        count,
+        percent:
+          diagnosisCompletedCount > 0
+            ? Math.round((count / diagnosisCompletedCount) * 1000) / 10
+            : 0,
+      };
+    });
+  }
+
   return NextResponse.json({
     survey: {
       id: survey.id,
@@ -100,7 +184,10 @@ export async function GET(
       uniqueRespondents,
       responseRate, // %
       totalResponses: (responses || []).length,
+      surveyType,
+      diagnosisCompletedCount,
     },
     questions,
+    diagnosisDistribution,
   });
 }

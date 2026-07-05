@@ -8,6 +8,35 @@ import {
 } from "@/lib/line";
 import { blocksToLineMessagesAsync } from "@/lib/blocks-to-line";
 import type { MessageBlock } from "@/types/blocks";
+import { logMessagesBulk } from "@/lib/logging";
+import {
+  blocksNeedPersonalization,
+  sendPersonalizedBlocks,
+  type FriendForPersonalize,
+} from "@/lib/personalize";
+
+// 配信対象の友だち情報（個別化・ログ用）
+const FRIEND_SELECT = "id, line_user_id, display_name, points, stage";
+
+// 送信後のログ記録（一括）
+async function logBroadcastSent(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  friends: FriendForPersonalize[],
+  blocks: MessageBlock[] | null,
+  fallbackMessage: string | undefined
+) {
+  const content = blocks
+    ? blocks
+        .filter((b) => b.type === "text" && b.text)
+        .map((b) => b.text)
+        .join("\n") || `[${blocks.map((b) => b.type).join(",")}]`
+    : fallbackMessage || "";
+  await logMessagesBulk(
+    supabase,
+    friends.map((f) => f.id),
+    { content, source: "broadcast" }
+  );
+}
 
 // 配信一覧取得
 export async function GET() {
@@ -108,60 +137,98 @@ export async function POST(request: NextRequest) {
       ? await blocksToLineMessagesAsync(blocks as MessageBlock[], supabase)
       : null;
 
+    // {name} や {link:} を含む場合は1人ずつ個別化して送る
+    const personalize =
+      !!blocks && blocksNeedPersonalization(blocks as MessageBlock[]);
+
     if (targetType === "all") {
       // 全友だちに一斉配信
-      if (lineMessages && lineMessages.length > 0) {
-        await broadcastMessages(lineMessages as any[]);
-      } else if (message) {
-        await broadcastMessage(message);
-      }
-      const { count } = await supabase
+      const { data: allFriends } = await supabase
         .from("friends")
-        .select("*", { count: "exact", head: true })
+        .select(FRIEND_SELECT)
         .eq("is_blocked", false);
-      deliveredCount = count || 0;
+      const targets = (allFriends || []) as FriendForPersonalize[];
+
+      if (personalize) {
+        deliveredCount = await sendPersonalizedBlocks(
+          supabase,
+          targets,
+          blocks as MessageBlock[],
+          "broadcast"
+        );
+      } else {
+        if (lineMessages && lineMessages.length > 0) {
+          await broadcastMessages(lineMessages as any[]);
+        } else if (message) {
+          await broadcastMessage(message);
+        }
+        deliveredCount = targets.length;
+        await logBroadcastSent(supabase, targets, blocks || null, message);
+      }
     } else if (targetType === "segment" && targetTags?.length > 0) {
       // タグベースのセグメント配信
       const { data: friends } = await supabase
         .from("friends")
-        .select("line_user_id")
+        .select(FRIEND_SELECT)
         .eq("is_blocked", false)
         .overlaps("tags", targetTags);
+      const targets = (friends || []) as FriendForPersonalize[];
 
-      if (friends && friends.length > 0) {
-        const userIds = friends.map((f) => f.line_user_id);
-        // LINE マルチキャストは500人まで
-        for (let i = 0; i < userIds.length; i += 500) {
-          const chunk = userIds.slice(i, i + 500);
-          if (lineMessages && lineMessages.length > 0) {
-            await multicastMessages(chunk, lineMessages as any[]);
-          } else if (message) {
-            await multicastMessage(chunk, message);
+      if (targets.length > 0) {
+        if (personalize) {
+          deliveredCount = await sendPersonalizedBlocks(
+            supabase,
+            targets,
+            blocks as MessageBlock[],
+            "broadcast"
+          );
+        } else {
+          const userIds = targets.map((f) => f.line_user_id);
+          // LINE マルチキャストは500人まで
+          for (let i = 0; i < userIds.length; i += 500) {
+            const chunk = userIds.slice(i, i + 500);
+            if (lineMessages && lineMessages.length > 0) {
+              await multicastMessages(chunk, lineMessages as any[]);
+            } else if (message) {
+              await multicastMessage(chunk, message);
+            }
           }
+          deliveredCount = targets.length;
+          await logBroadcastSent(supabase, targets, blocks || null, message);
         }
-        deliveredCount = friends.length;
       }
     } else if (targetType === "survey" && targetChoiceId) {
       // アンケート回答ベースの配信
       const { data: responses } = await supabase
         .from("survey_responses")
-        .select("friend_id, friends(line_user_id)")
+        .select(`friend_id, friends(${FRIEND_SELECT})`)
         .eq("choice_id", targetChoiceId);
 
       if (responses && responses.length > 0) {
-        const userIds = responses
-          .map((r: any) => r.friends?.line_user_id)
-          .filter(Boolean) as string[];
+        const targets = responses
+          .map((r: any) => r.friends)
+          .filter(Boolean) as FriendForPersonalize[];
 
-        for (let i = 0; i < userIds.length; i += 500) {
-          const chunk = userIds.slice(i, i + 500);
-          if (lineMessages && lineMessages.length > 0) {
-            await multicastMessages(chunk, lineMessages as any[]);
-          } else if (message) {
-            await multicastMessage(chunk, message);
+        if (personalize) {
+          deliveredCount = await sendPersonalizedBlocks(
+            supabase,
+            targets,
+            blocks as MessageBlock[],
+            "broadcast"
+          );
+        } else {
+          const userIds = targets.map((f) => f.line_user_id);
+          for (let i = 0; i < userIds.length; i += 500) {
+            const chunk = userIds.slice(i, i + 500);
+            if (lineMessages && lineMessages.length > 0) {
+              await multicastMessages(chunk, lineMessages as any[]);
+            } else if (message) {
+              await multicastMessage(chunk, message);
+            }
           }
+          deliveredCount = targets.length;
+          await logBroadcastSent(supabase, targets, blocks || null, message);
         }
-        deliveredCount = userIds.length;
       }
     }
 

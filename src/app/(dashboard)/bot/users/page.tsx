@@ -1,10 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -15,6 +23,8 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Search, Upload, FileUp, X, Loader2, Download, Plus, Tag } from "lucide-react";
+import { STAGES, stageColor } from "@/lib/stages";
+import { scoreBand } from "@/lib/engagement";
 
 type Friend = {
   id: string;
@@ -25,11 +35,29 @@ type Friend = {
   is_blocked: boolean;
   joined_at: string;
   last_active_at: string;
+  stage?: string;
+  points?: number;
+  engagement_score?: number;
 };
 
+function scoreBandColor(band: string): string {
+  switch (band) {
+    case "ホット":
+      return "bg-red-100 text-red-700";
+    case "アクティブ":
+      return "bg-green-100 text-green-700";
+    case "ライト":
+      return "bg-blue-100 text-blue-700";
+    default:
+      return "bg-gray-100 text-gray-500";
+  }
+}
+
 export default function UsersPage() {
+  const router = useRouter();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [search, setSearch] = useState("");
+  const [stageFilter, setStageFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -66,6 +94,11 @@ export default function UsersPage() {
   useEffect(() => {
     if (!loading) loadFriends();
   }, [search]);
+
+  const filteredFriends =
+    stageFilter === "all"
+      ? friends
+      : friends.filter((f) => (f.stage || "新規") === stageFilter);
 
   async function addTag(friendId: string, override?: string) {
     const tag = (override ?? tagInput[friendId])?.trim();
@@ -254,14 +287,31 @@ export default function UsersPage() {
 
       <Card>
         <CardHeader>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="名前で検索..."
-              className="pl-9"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="名前で検索..."
+                className="pl-9"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <Select value={stageFilter} onValueChange={(v) => setStageFilter(v as string)}>
+              <SelectTrigger className="sm:w-40">
+                <SelectValue placeholder="ステージ">
+                  {(v: string) => (v === "all" ? "全ステージ" : v)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全ステージ</SelectItem>
+                {STAGES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -283,11 +333,18 @@ export default function UsersPage() {
                 CSVから友だちをインポート
               </Button>
             </div>
+          ) : filteredFriends.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              該当するステージの友だちがいません
+            </p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>ユーザー</TableHead>
+                  <TableHead>ステージ</TableHead>
+                  <TableHead>スコア</TableHead>
+                  <TableHead>ポイント</TableHead>
                   <TableHead>友だち追加日</TableHead>
                   <TableHead>最終アクティブ</TableHead>
                   <TableHead>タグ</TableHead>
@@ -295,8 +352,14 @@ export default function UsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {friends.map((user) => (
-                  <TableRow key={user.id}>
+                {filteredFriends.map((user) => {
+                  const band = scoreBand(user.engagement_score || 0);
+                  return (
+                  <TableRow
+                    key={user.id}
+                    className="cursor-pointer"
+                    onClick={() => router.push(`/bot/users/${user.id}`)}
+                  >
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <Avatar className="h-8 w-8">
@@ -319,6 +382,19 @@ export default function UsersPage() {
                         </div>
                       </div>
                     </TableCell>
+                    <TableCell>
+                      <Badge className={`text-xs ${stageColor(user.stage)}`}>
+                        {user.stage || "新規"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={`text-xs ${scoreBandColor(band)}`}>
+                        {band}（{user.engagement_score ?? 0}）
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {user.points ?? 0}pt
+                    </TableCell>
                     <TableCell className="text-sm">
                       {user.joined_at
                         ? new Date(user.joined_at).toLocaleDateString("ja-JP")
@@ -331,7 +407,7 @@ export default function UsersPage() {
                           )
                         : "-"}
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-1 flex-wrap items-center">
                         {(user.tags || []).map((tag) => (
                           <Badge
@@ -425,7 +501,8 @@ export default function UsersPage() {
                       )}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}

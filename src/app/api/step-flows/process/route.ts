@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { pushMessage } from "@/lib/line";
+import { logMessage } from "@/lib/logging";
+import { renderTemplate, type FriendForPersonalize } from "@/lib/personalize";
 
 // ステップ配信の実行（定期実行用）
 export async function POST() {
@@ -10,7 +12,9 @@ export async function POST() {
   // 送信すべきエンロールメントを取得
   const { data: enrollments, error } = await supabase
     .from("step_enrollments")
-    .select("*, step_flows(id, status), friends(line_user_id)")
+    .select(
+      "*, step_flows(id, status), friends(id, line_user_id, display_name, points, stage)"
+    )
     .eq("status", "active")
     .lte("next_send_at", now);
 
@@ -40,11 +44,23 @@ export async function POST() {
       }
 
       const currentMessage = messages[enrollment.current_step];
-      const lineUserId = enrollment.friends?.line_user_id;
+      const friend = enrollment.friends as FriendForPersonalize | null;
+      const lineUserId = friend?.line_user_id;
 
       if (lineUserId && currentMessage) {
-        await pushMessage(lineUserId, currentMessage.message_text);
+        // {name} 等の差し込み変数・計測リンクを展開して送信
+        const text = friend
+          ? renderTemplate(currentMessage.message_text, friend)
+          : currentMessage.message_text;
+        await pushMessage(lineUserId, text);
         sent++;
+
+        await logMessage(supabase, enrollment.friend_id, {
+          direction: "out",
+          content: text,
+          source: "step",
+          metadata: { flow_id: enrollment.flow_id, step: enrollment.current_step },
+        });
 
         const nextStep = enrollment.current_step + 1;
 

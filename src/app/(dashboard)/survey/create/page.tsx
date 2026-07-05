@@ -17,6 +17,7 @@ import {
   Tag,
   Loader2,
   FileText,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import { SurveyPreview } from "@/components/survey-preview";
@@ -27,6 +28,8 @@ type Choice = {
   tag: string;
   broadcastMessage: string;
   isFreeInput?: boolean;
+  // 診断タイプ別の加点。キーは DiagnosisType.id（UI管理用ローカルID）
+  diagnosisPoints?: Record<string, number>;
 };
 
 type Question = {
@@ -35,6 +38,25 @@ type Question = {
   type: "single" | "multiple";
   choices: Choice[];
 };
+
+// 診断コンテンツのタイプ定義（例：攻め型／守り型／バランス型）
+type DiagnosisType = {
+  id: string; // UI管理用ローカルID（typeKey とは独立。保存時に typeKey へ変換される）
+  typeKey: string; // DB保存キー（diagnosis_results.type_key と一致させる）
+  title: string;
+  resultMessage: string;
+  addTag: string;
+};
+
+function makeDiagnosisType(label: string): DiagnosisType {
+  return {
+    id: `dt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    typeKey: label,
+    title: label,
+    resultMessage: "",
+    addTag: "",
+  };
+}
 
 // プリセットテンプレート
 const TEMPLATES: Record<string, { title: string; description: string; questions: Question[] }> = {
@@ -88,6 +110,8 @@ function SurveyCreateInner() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [completionMessage, setCompletionMessage] = useState("");
+  const [surveyType, setSurveyType] = useState<"survey" | "diagnosis">("survey");
+  const [diagnosisTypes, setDiagnosisTypes] = useState<DiagnosisType[]>([]);
   const [questions, setQuestions] = useState<Question[]>([
     {
       id: "q1",
@@ -116,8 +140,49 @@ function SurveyCreateInner() {
           setTitle(d.survey.title || "");
           setDescription(d.survey.description || "");
           setCompletionMessage(d.survey.completionMessage || "");
+
+          const loadedType: "survey" | "diagnosis" =
+            d.survey.surveyType === "diagnosis" ? "diagnosis" : "survey";
+          setSurveyType(loadedType);
+
+          // 診断タイプ定義を読み込み、typeKey → ローカルID の対応を作る
+          let loadedTypes: DiagnosisType[] = [];
+          if (
+            loadedType === "diagnosis" &&
+            Array.isArray(d.survey.diagnosisResults)
+          ) {
+            loadedTypes = d.survey.diagnosisResults.map(
+              (r: {
+                typeKey: string;
+                title: string;
+                resultMessage: string;
+                addTag: string;
+              }) => ({
+                id: `dt_${r.typeKey}`,
+                typeKey: r.typeKey,
+                title: r.title || "",
+                resultMessage: r.resultMessage || "",
+                addTag: r.addTag || "",
+              })
+            );
+            setDiagnosisTypes(loadedTypes);
+          }
+
           if (d.survey.questions && d.survey.questions.length > 0) {
-            setQuestions(d.survey.questions);
+            const qs = (d.survey.questions as Question[]).map((q) => ({
+              ...q,
+              choices: q.choices.map((c) => {
+                const serverPoints =
+                  (c as Choice).diagnosisPoints || ({} as Record<string, number>);
+                const localPoints: Record<string, number> = {};
+                for (const t of loadedTypes) {
+                  const v = serverPoints[t.typeKey];
+                  if (v) localPoints[t.id] = v;
+                }
+                return { ...c, diagnosisPoints: localPoints };
+              }),
+            }));
+            setQuestions(qs);
           }
         }
       })
@@ -133,6 +198,80 @@ function SurveyCreateInner() {
     setTitle(t.title);
     setDescription(t.description);
     setQuestions(t.questions);
+    setSurveyType("survey");
+    setDiagnosisTypes([]);
+  }
+
+  // アンケート ⇔ 診断 の種別切替
+  function switchSurveyType(next: "survey" | "diagnosis") {
+    setSurveyType(next);
+    if (next === "diagnosis") {
+      setDiagnosisTypes((prev) =>
+        prev.length > 0 ? prev : [makeDiagnosisType("タイプA"), makeDiagnosisType("タイプB")]
+      );
+    }
+  }
+
+  function addDiagnosisType() {
+    setDiagnosisTypes((prev) => [
+      ...prev,
+      makeDiagnosisType(`タイプ${prev.length + 1}`),
+    ]);
+  }
+
+  function removeDiagnosisType(typeId: string) {
+    setDiagnosisTypes((prev) => prev.filter((t) => t.id !== typeId));
+    // 各選択肢に残っている当該タイプの加点データも削除
+    setQuestions((prev) =>
+      prev.map((q) => ({
+        ...q,
+        choices: q.choices.map((c) => {
+          if (!c.diagnosisPoints || !(typeId in c.diagnosisPoints)) return c;
+          const rest = { ...c.diagnosisPoints };
+          delete rest[typeId];
+          return { ...c, diagnosisPoints: rest };
+        }),
+      }))
+    );
+  }
+
+  function updateDiagnosisType(
+    typeId: string,
+    field: "typeKey" | "title" | "resultMessage" | "addTag",
+    value: string
+  ) {
+    setDiagnosisTypes((prev) =>
+      prev.map((t) => (t.id === typeId ? { ...t, [field]: value } : t))
+    );
+  }
+
+  function updateChoiceDiagnosisPoint(
+    qId: string,
+    cId: string,
+    typeId: string,
+    value: number
+  ) {
+    const clamped = Math.max(0, Math.min(3, Number.isFinite(value) ? value : 0));
+    setQuestions((prev) =>
+      prev.map((q) =>
+        q.id === qId
+          ? {
+              ...q,
+              choices: q.choices.map((c) =>
+                c.id === cId
+                  ? {
+                      ...c,
+                      diagnosisPoints: {
+                        ...(c.diagnosisPoints || {}),
+                        [typeId]: clamped,
+                      },
+                    }
+                  : c
+              ),
+            }
+          : q
+      )
+    );
   }
 
   function addQuestion() {
@@ -210,16 +349,68 @@ function SurveyCreateInner() {
     );
   }
 
-  // 下書き保存（編集モードならPATCH、新規ならPOST）
-  async function saveDraft() {
+  // 保存前の入力チェック（アンケート・診断共通 + 診断固有）
+  function validateBeforeSave(): boolean {
     if (!title.trim()) {
       alert("アンケート名を入力してください");
-      return;
+      return false;
     }
     if (questions.some((q) => !q.text.trim())) {
       alert("質問文を入力してください");
-      return;
+      return false;
     }
+    if (surveyType === "diagnosis") {
+      if (diagnosisTypes.length === 0) {
+        alert("診断タイプを1つ以上追加してください");
+        return false;
+      }
+      if (diagnosisTypes.some((t) => !t.typeKey.trim() || !t.title.trim())) {
+        alert("診断タイプの識別子とタイトルをすべて入力してください");
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // API送信用のペイロードを組み立てる（診断タイプ別加点をローカルID→typeKeyへ変換）
+  function buildPayload() {
+    const diagnosisResultsPayload = diagnosisTypes.map((t, i) => ({
+      typeKey: t.typeKey.trim(),
+      title: t.title.trim(),
+      resultMessage: t.resultMessage,
+      addTag: t.addTag.trim() || null,
+      sortOrder: i,
+    }));
+
+    const questionsPayload = questions.map((q) => ({
+      ...q,
+      choices: q.choices.map((c) => {
+        const diagnosisPoints: Record<string, number> = {};
+        if (surveyType === "diagnosis") {
+          for (const t of diagnosisTypes) {
+            const key = t.typeKey.trim();
+            if (!key) continue;
+            const v = Number(c.diagnosisPoints?.[t.id] || 0);
+            if (v) diagnosisPoints[key] = v;
+          }
+        }
+        return { ...c, diagnosisPoints };
+      }),
+    }));
+
+    return {
+      title,
+      description,
+      completionMessage,
+      surveyType,
+      questions: questionsPayload,
+      diagnosisResults: surveyType === "diagnosis" ? diagnosisResultsPayload : [],
+    };
+  }
+
+  // 下書き保存（編集モードならPATCH、新規ならPOST）
+  async function saveDraft() {
+    if (!validateBeforeSave()) return;
 
     setSaving(true);
     try {
@@ -228,7 +419,7 @@ function SurveyCreateInner() {
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, completionMessage, questions }),
+        body: JSON.stringify(buildPayload()),
       });
       const data = await res.json();
 
@@ -248,14 +439,7 @@ function SurveyCreateInner() {
 
   // テスト配信（堀優介のみ）
   async function sendTest() {
-    if (!title.trim()) {
-      alert("アンケート名を入力してください");
-      return;
-    }
-    if (questions.some((q) => !q.text.trim())) {
-      alert("質問文を入力してください");
-      return;
-    }
+    if (!validateBeforeSave()) return;
 
     setSending(true);
     setTestResult(null);
@@ -266,7 +450,7 @@ function SurveyCreateInner() {
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, completionMessage, questions }),
+        body: JSON.stringify(buildPayload()),
       });
       const data = await res.json();
 
@@ -367,6 +551,41 @@ function SurveyCreateInner() {
         </CardContent>
       </Card>
 
+      {/* 種別切替 */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
+            <p className="text-sm font-medium">種別</p>
+          </div>
+          <div className="inline-flex rounded-lg border p-1 bg-muted/30">
+            <Button
+              type="button"
+              size="sm"
+              variant={surveyType === "survey" ? "default" : "ghost"}
+              className={surveyType === "survey" ? "bg-[#06C755] hover:bg-[#05b34c]" : ""}
+              onClick={() => switchSurveyType("survey")}
+            >
+              アンケート
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={surveyType === "diagnosis" ? "default" : "ghost"}
+              className={surveyType === "diagnosis" ? "bg-purple-600 hover:bg-purple-700" : ""}
+              onClick={() => switchSurveyType("diagnosis")}
+            >
+              診断
+            </Button>
+          </div>
+          {surveyType === "diagnosis" && (
+            <p className="text-xs text-muted-foreground mt-2">
+              診断コンテンツ：質問の選択肢ごとにタイプ別の加点を設定し、合計点が最も高いタイプの結果をLINEで自動送信します。
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* 基本情報 */}
       <Card>
         <CardHeader>
@@ -407,6 +626,106 @@ function SurveyCreateInner() {
           </div>
         </CardContent>
       </Card>
+
+      {/* 診断タイプ定義（診断コンテンツの場合のみ） */}
+      {surveyType === "diagnosis" && (
+        <Card className="border-l-4 border-l-purple-500">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">診断タイプ定義</CardTitle>
+              <Badge variant="outline">{diagnosisTypes.length}タイプ</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              例：攻め型／守り型／バランス型。各質問の選択肢に、ここで定義したタイプごとの加点を設定します。
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {diagnosisTypes.map((t, ti) => (
+              <div
+                key={t.id}
+                className="rounded-lg border p-4 space-y-3 bg-purple-50/40 dark:bg-purple-950/10"
+              >
+                <div className="flex items-center justify-between">
+                  <Badge variant="outline" className="text-xs">
+                    タイプ {ti + 1}
+                  </Badge>
+                  {diagnosisTypes.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeDiagnosisType(t.id)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      タイプ識別子（type_key）
+                    </label>
+                    <Input
+                      value={t.typeKey}
+                      onChange={(e) =>
+                        updateDiagnosisType(t.id, "typeKey", e.target.value)
+                      }
+                      placeholder="例：攻め型"
+                      className="text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Tag className="h-3 w-3" />
+                      付与タグ（任意）
+                    </label>
+                    <Input
+                      value={t.addTag}
+                      onChange={(e) =>
+                        updateDiagnosisType(t.id, "addTag", e.target.value)
+                      }
+                      placeholder="例：攻め型"
+                      className="text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">
+                    結果タイトル
+                  </label>
+                  <Input
+                    value={t.title}
+                    onChange={(e) =>
+                      updateDiagnosisType(t.id, "title", e.target.value)
+                    }
+                    placeholder="例：攻め型経営者タイプ"
+                    className="text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">
+                    結果メッセージ（LINEに送信される本文）
+                  </label>
+                  <Textarea
+                    value={t.resultMessage}
+                    onChange={(e) =>
+                      updateDiagnosisType(t.id, "resultMessage", e.target.value)
+                    }
+                    placeholder="例：あなたは新しい施策にどんどん挑戦していく攻め型です..."
+                    rows={3}
+                    className="text-sm"
+                  />
+                </div>
+              </div>
+            ))}
+
+            <Button variant="outline" size="sm" onClick={addDiagnosisType}>
+              <Plus className="h-3 w-3 mr-1" />
+              タイプを追加
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* 質問 */}
       <div className="space-y-4">
@@ -533,6 +852,39 @@ function SurveyCreateInner() {
                         「その他」自由記入（選択後にテキスト入力を求め、入力内容をタグとして登録）
                       </label>
                     </div>
+
+                    {surveyType === "diagnosis" && diagnosisTypes.length > 0 && (
+                      <div className="space-y-1.5 border-t pt-3">
+                        <label className="text-xs text-muted-foreground">
+                          タイプ別加点（0〜3点）
+                        </label>
+                        <div className="flex flex-wrap gap-3">
+                          {diagnosisTypes.map((t) => (
+                            <div key={t.id} className="flex items-center gap-1.5">
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                {t.title || t.typeKey || "（未設定）"}
+                              </span>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={3}
+                                step={1}
+                                value={c.diagnosisPoints?.[t.id] ?? 0}
+                                onChange={(e) =>
+                                  updateChoiceDiagnosisPoint(
+                                    q.id,
+                                    c.id,
+                                    t.id,
+                                    Number(e.target.value)
+                                  )
+                                }
+                                className="h-7 w-16 text-sm text-center"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
 

@@ -142,12 +142,19 @@ export function MessageBlockEditor({ blocks, onChange, surveys = [] }: Props) {
 
               {/* テキストブロック */}
               {block.type === "text" && (
-                <Textarea
-                  placeholder="メッセージを入力..."
-                  rows={3}
-                  value={block.text || ""}
-                  onChange={(e) => updateBlock(block.id, { text: e.target.value })}
-                />
+                <div className="space-y-1">
+                  <Textarea
+                    placeholder="メッセージを入力..."
+                    rows={3}
+                    value={block.text || ""}
+                    onChange={(e) => updateBlock(block.id, { text: e.target.value })}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    差し込み変数: {"{name}"}=名前 {"{points}"}=ポイント {"{stage}"}
+                    =ステージ ／ 計測リンク: {"{link:コード}"}
+                    （リンク計測ページで作成）を書くと1人ずつ個別送信されます
+                  </p>
+                </div>
               )}
 
               {/* 画像ブロック */}

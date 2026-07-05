@@ -5,11 +5,15 @@ import { usePathname } from "next/navigation";
 import {
   Bot,
   ClipboardList,
+  Gem,
   LayoutDashboard,
+  Link2,
+  MessageCircleReply,
   MessageSquare,
   PieChart,
   Send,
   Settings,
+  Sparkles,
   Tag,
   Users,
 } from "lucide-react";
@@ -47,7 +51,7 @@ const navBot = [
     icon: MessageSquare,
   },
   {
-    label: "友だち一覧",
+    label: "顧客管理（カルテ）",
     href: "/bot/users",
     icon: Users,
   },
@@ -68,6 +72,29 @@ const navSurvey = [
     label: "回答結果",
     href: "/survey/results",
     icon: PieChart,
+  },
+];
+
+const navEngage = [
+  {
+    label: "キーワード自動応答",
+    href: "/engage/replies",
+    icon: MessageCircleReply,
+  },
+  {
+    label: "おみくじ",
+    href: "/engage/omikuji",
+    icon: Sparkles,
+  },
+  {
+    label: "ポイント・特典",
+    href: "/engage/points",
+    icon: Gem,
+  },
+  {
+    label: "リンク計測",
+    href: "/engage/links",
+    icon: Link2,
   },
 ];
 
@@ -149,6 +176,25 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navSurvey.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <SidebarMenuButton
+                    render={<Link href={item.href} />}
+                    isActive={pathname === item.href}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    <span>{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>エンゲージ</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navEngage.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
                     render={<Link href={item.href} />}

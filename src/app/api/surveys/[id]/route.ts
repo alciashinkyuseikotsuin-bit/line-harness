@@ -23,7 +23,8 @@ export async function GET(
           choice_text,
           tag,
           broadcast_message,
-          sort_order
+          sort_order,
+          diagnosis_points
         )
       )
     `
@@ -41,7 +42,7 @@ export async function GET(
   // 質問・選択肢を sort_order でソート
   const questions = (survey.survey_questions || [])
     .sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order)
-    .map((q: { id: string; question_text: string; survey_choices: { id: string; choice_text: string; tag: string; broadcast_message: string | null; sort_order: number }[] }) => ({
+    .map((q: { id: string; question_text: string; survey_choices: { id: string; choice_text: string; tag: string; broadcast_message: string | null; sort_order: number; diagnosis_points: Record<string, number> | null }[] }) => ({
       id: q.id,
       text: q.question_text,
       type: "single" as const,
@@ -53,8 +54,24 @@ export async function GET(
           tag: c.tag,
           broadcastMessage: c.broadcast_message || "",
           isFreeInput: c.tag?.includes("その他") || false,
+          diagnosisPoints: c.diagnosis_points || {},
         })),
     }));
+
+  // 診断タイプ定義（診断コンテンツの場合のみ意味を持つ）
+  const { data: diagnosisResultRows } = await supabase
+    .from("diagnosis_results")
+    .select("type_key, title, result_message, add_tag, sort_order")
+    .eq("survey_id", id)
+    .order("sort_order", { ascending: true });
+
+  const diagnosisResults = (diagnosisResultRows || []).map((r) => ({
+    typeKey: r.type_key,
+    title: r.title,
+    resultMessage: r.result_message,
+    addTag: r.add_tag || "",
+    sortOrder: r.sort_order,
+  }));
 
   return NextResponse.json({
     survey: {
@@ -63,7 +80,9 @@ export async function GET(
       description: survey.description,
       completionMessage: survey.completion_message || "",
       status: survey.status,
+      surveyType: survey.survey_type || "survey",
       questions,
+      diagnosisResults,
     },
   });
 }
@@ -75,7 +94,14 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = await request.json();
-  const { title, description, completionMessage, questions } = body;
+  const {
+    title,
+    description,
+    completionMessage,
+    questions,
+    surveyType,
+    diagnosisResults,
+  } = body;
 
   const supabase = getSupabaseAdmin();
 
@@ -93,13 +119,17 @@ export async function PATCH(
     );
   }
 
-  // タイトル・説明・完了メッセージを更新
+  // 種別（診断 or 通常アンケート）。未指定時は従来通り 'survey'
+  const normalizedSurveyType = surveyType === "diagnosis" ? "diagnosis" : "survey";
+
+  // タイトル・説明・完了メッセージ・種別を更新
   const { error: updateError } = await supabase
     .from("surveys")
     .update({
       title,
       description,
       completion_message: completionMessage || null,
+      survey_type: normalizedSurveyType,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
@@ -139,7 +169,42 @@ export async function PATCH(
         tag: c.tag,
         broadcast_message: c.broadcastMessage || null,
         sort_order: ci,
+        diagnosis_points: c.diagnosisPoints || {},
       });
+    }
+  }
+
+  // 診断タイプ定義を洗い替え（survey_id に紐づく行を全削除→再作成）
+  await supabase.from("diagnosis_results").delete().eq("survey_id", id);
+
+  if (
+    normalizedSurveyType === "diagnosis" &&
+    Array.isArray(diagnosisResults) &&
+    diagnosisResults.length > 0
+  ) {
+    const rows = diagnosisResults
+      .filter((r: { typeKey?: string }) => r.typeKey && r.typeKey.trim())
+      .map(
+        (
+          r: {
+            typeKey: string;
+            title?: string;
+            resultMessage?: string;
+            addTag?: string;
+            sortOrder?: number;
+          },
+          i: number
+        ) => ({
+          survey_id: id,
+          type_key: r.typeKey.trim(),
+          title: r.title || r.typeKey,
+          result_message: r.resultMessage || "",
+          add_tag: r.addTag || null,
+          sort_order: r.sortOrder ?? i,
+        })
+      );
+    if (rows.length > 0) {
+      await supabase.from("diagnosis_results").insert(rows);
     }
   }
 
