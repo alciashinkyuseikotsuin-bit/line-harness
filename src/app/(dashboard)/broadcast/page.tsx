@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -81,13 +82,13 @@ export default function BroadcastPage() {
   const [scheduling, setScheduling] = useState(false);
 
   useEffect(() => {
-    fetch("/api/broadcast")
+    apiFetch("/api/broadcast")
       .then((r) => r.json())
       .then((d) => setBroadcasts(d.broadcasts || []))
       .catch(console.error)
       .finally(() => setLoading(false));
 
-    fetch("/api/friends")
+    apiFetch("/api/friends")
       .then((r) => r.json())
       .then((d) => {
         const friends = d.friends || [];
@@ -95,7 +96,7 @@ export default function BroadcastPage() {
         setFriendsWithTags(friends);
       });
 
-    fetch("/api/surveys")
+    apiFetch("/api/surveys")
       .then((r) => r.json())
       .then((d) =>
         setSurveys(
@@ -104,7 +105,7 @@ export default function BroadcastPage() {
       )
       .catch(() => {});
 
-    fetch("/api/tags")
+    apiFetch("/api/tags")
       .then((r) => r.json())
       .then((d) => setAllTags(d.details || []))
       .catch(() => {});
@@ -164,13 +165,13 @@ export default function BroadcastPage() {
       let res;
       if (editingDraftId) {
         // 編集中下書きを予約配信に切り替え
-        res = await fetch(`/api/broadcast/${editingDraftId}`, {
+        res = await apiFetch(`/api/broadcast/${editingDraftId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
       } else {
-        res = await fetch("/api/broadcast", {
+        res = await apiFetch("/api/broadcast", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -184,7 +185,7 @@ export default function BroadcastPage() {
       setResult(
         `✅ ${new Date(scheduledAt).toLocaleString("ja-JP")} に配信予約しました`
       );
-      const listRes = await fetch("/api/broadcast");
+      const listRes = await apiFetch("/api/broadcast");
       const listData = await listRes.json();
       setBroadcasts(listData.broadcasts || []);
       setShowCreate(false);
@@ -197,7 +198,7 @@ export default function BroadcastPage() {
 
   // 下書きを編集モードで開く
   async function openDraft(d: Broadcast) {
-    const res = await fetch(`/api/broadcast/${d.id}`);
+    const res = await apiFetch(`/api/broadcast/${d.id}`);
     const data = await res.json();
     if (!res.ok || !data.broadcast) {
       alert(data.error || "下書きの読み込みに失敗しました");
@@ -244,13 +245,13 @@ export default function BroadcastPage() {
       };
       let res;
       if (editingDraftId) {
-        res = await fetch(`/api/broadcast/${editingDraftId}`, {
+        res = await apiFetch(`/api/broadcast/${editingDraftId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
       } else {
-        res = await fetch("/api/broadcast", {
+        res = await apiFetch("/api/broadcast", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...payload, saveAsDraft: true }),
@@ -263,7 +264,7 @@ export default function BroadcastPage() {
       }
       setResult("✅ 下書きを保存しました");
       // 一覧を再読込してフォームを閉じる
-      const listRes = await fetch("/api/broadcast");
+      const listRes = await apiFetch("/api/broadcast");
       const listData = await listRes.json();
       setBroadcasts(listData.broadcasts || []);
       setShowCreate(false);
@@ -275,10 +276,10 @@ export default function BroadcastPage() {
   }
 
   async function deleteBroadcast(id: string) {
-    const res = await fetch(`/api/broadcast/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/broadcast/${id}`, { method: "DELETE" });
     if (res.ok) {
       setConfirmDeleteId(null);
-      const listRes = await fetch("/api/broadcast");
+      const listRes = await apiFetch("/api/broadcast");
       const listData = await listRes.json();
       setBroadcasts(listData.broadcasts || []);
     }
@@ -297,7 +298,7 @@ export default function BroadcastPage() {
     setSending(true);
     setResult(null);
     try {
-      const res = await fetch("/api/broadcast", {
+      const res = await apiFetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -345,7 +346,7 @@ export default function BroadcastPage() {
         payload.targetTags = selectedTags;
       }
 
-      const res = await fetch("/api/broadcast", {
+      const res = await apiFetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -355,12 +356,12 @@ export default function BroadcastPage() {
         setResult(`配信完了: ${data.deliveredCount}人に送信しました`);
         // 編集していた下書きがあれば削除（履歴に「下書き」と「配信済み」が両方残らないように）
         if (editingDraftId) {
-          await fetch(`/api/broadcast/${editingDraftId}`, { method: "DELETE" });
+          await apiFetch(`/api/broadcast/${editingDraftId}`, { method: "DELETE" });
         }
         setShowCreate(false);
         setShowConfirm(false);
         resetForm();
-        const listRes = await fetch("/api/broadcast");
+        const listRes = await apiFetch("/api/broadcast");
         const listData = await listRes.json();
         setBroadcasts(listData.broadcasts || []);
       } else {

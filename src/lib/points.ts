@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { pushMessages } from "@/lib/line";
 import { logEvent, logMessage } from "@/lib/logging";
 import { enrollMatchingStepFlows } from "@/lib/step-enrollment";
+import { getAccountById, getDefaultAccount, resolveToken } from "@/lib/accounts";
 
 export type PointRules = {
   survey_answer: number;
@@ -23,14 +24,16 @@ const DEFAULT_RULES: PointRules = {
 
 /** app_settings からポイント付与ルールを取得（無ければデフォルト） */
 export async function getPointRules(
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  accountId?: string
 ): Promise<PointRules> {
   try {
-    const { data } = await supabase
+    let query = supabase
       .from("app_settings")
       .select("value")
-      .eq("key", "point_rules")
-      .single();
+      .eq("key", "point_rules");
+    if (accountId) query = query.eq("account_id", accountId);
+    const { data } = await query.limit(1).maybeSingle();
     if (data?.value) return { ...DEFAULT_RULES, ...data.value };
   } catch {
     // 設定テーブル未作成でも動くように
@@ -56,12 +59,18 @@ export async function awardPoints(
   if (!amount || amount <= 0) return null;
 
   try {
-    // 現在ポイント取得 → 加算
+    // 現在ポイント取得 → 加算（所属アカウントも同時に取得）
     const { data: current } = await supabase
       .from("friends")
-      .select("points, tags")
+      .select("points, tags, account_id")
       .eq("id", friend.id)
       .single();
+
+    // 所属アカウントのトークンで送信・特典もアカウント内のものだけを対象にする
+    const account = current?.account_id
+      ? await getAccountById(supabase, current.account_id)
+      : await getDefaultAccount(supabase);
+    const token = resolveToken(account);
     const before = current?.points || 0;
     const newTotal = before + amount;
 
@@ -83,13 +92,17 @@ export async function awardPoints(
       total: newTotal,
     });
 
-    // === 特典到達チェック ===
-    const { data: rewards } = await supabase
+    // === 特典到達チェック（同じアカウントの特典のみ） ===
+    let rewardsQuery = supabase
       .from("point_rewards")
       .select("id, threshold, title, message, add_tag")
       .eq("active", true)
       .lte("threshold", newTotal)
       .order("threshold", { ascending: true });
+    if (current?.account_id) {
+      rewardsQuery = rewardsQuery.eq("account_id", current.account_id);
+    }
+    const { data: rewards } = await rewardsQuery;
 
     if (rewards && rewards.length > 0) {
       const { data: claims } = await supabase
@@ -116,9 +129,11 @@ export async function awardPoints(
           }
 
           try {
-            await pushMessages(friend.line_user_id, [
-              { type: "text", text: reward.message },
-            ]);
+            await pushMessages(
+              friend.line_user_id,
+              [{ type: "text", text: reward.message }],
+              token
+            );
             await logMessage(supabase, friend.id, {
               direction: "out",
               content: reward.message,

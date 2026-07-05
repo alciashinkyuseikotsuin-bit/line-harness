@@ -61,7 +61,8 @@ export async function sendPersonalizedBlocks(
   friends: FriendForPersonalize[],
   blocks: MessageBlock[],
   source: string,
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
+  token?: string
 ): Promise<number> {
   let sent = 0;
   for (const friend of friends) {
@@ -77,7 +78,7 @@ export async function sendPersonalizedBlocks(
       );
       if (lineMessages.length === 0) continue;
 
-      await pushMessages(friend.line_user_id, lineMessages);
+      await pushMessages(friend.line_user_id, lineMessages, token);
       sent++;
 
       const textContent = personalized

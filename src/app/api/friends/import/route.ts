@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { getUserProfile } from "@/lib/line";
+import { getAccountFromRequest, resolveToken } from "@/lib/accounts";
 
 // CSVテキストをパース
 function parseCSV(text: string): Record<string, string>[] {
@@ -80,6 +81,9 @@ function findTagsColumn(headers: string[]): string | null {
 
 export async function POST(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
+  const token = resolveToken(account);
 
   try {
     const formData = await request.formData();
@@ -116,12 +120,15 @@ export async function POST(request: NextRequest) {
 
         // LINE User IDがある場合
         if (lineUserId && lineUserId.startsWith("U") && lineUserId.length >= 30) {
-          // 既存チェック
-          const { data: existing } = await supabase
+          // 既存チェック（アカウント指定時はアカウント内で一意）
+          let existingQuery = supabase
             .from("friends")
             .select("id")
-            .eq("line_user_id", lineUserId)
-            .single();
+            .eq("line_user_id", lineUserId);
+          if (accountId) {
+            existingQuery = existingQuery.eq("account_id", accountId);
+          }
+          const { data: existing } = await existingQuery.single();
 
           if (existing) {
             skipped++;
@@ -131,7 +138,7 @@ export async function POST(request: NextRequest) {
           // LINEからプロフィール取得を試みる
           let profile: { displayName: string; pictureUrl?: string; statusMessage?: string } | null = null;
           try {
-            profile = await getUserProfile(lineUserId);
+            profile = await getUserProfile(lineUserId, token);
           } catch {
             // プロフィール取得失敗（ブロック済み等）
           }
@@ -149,6 +156,7 @@ export async function POST(request: NextRequest) {
             is_blocked: !profile, // プロフィール取得できない = ブロック済みの可能性
             joined_at: new Date().toISOString(),
             last_active_at: new Date().toISOString(),
+            account_id: accountId ?? null,
           });
           imported++;
         }
@@ -165,6 +173,7 @@ export async function POST(request: NextRequest) {
             is_blocked: false,
             joined_at: new Date().toISOString(),
             last_active_at: new Date().toISOString(),
+            account_id: accountId ?? null,
           });
           imported++;
         } else {

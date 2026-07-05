@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +24,7 @@ export default function TagsPage() {
   async function loadTags() {
     setLoading(true);
     try {
-      const res = await fetch("/api/tags");
+      const res = await apiFetch("/api/tags");
       const data = await res.json();
       setTags(data.details || []);
     } finally {
@@ -41,7 +42,7 @@ export default function TagsPage() {
     setCreating(true);
     setError(null);
     try {
-      const res = await fetch("/api/tags", {
+      const res = await apiFetch("/api/tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -59,7 +60,7 @@ export default function TagsPage() {
   }
 
   async function deleteTag(name: string) {
-    const res = await fetch("/api/tags", {
+    const res = await apiFetch("/api/tags", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),

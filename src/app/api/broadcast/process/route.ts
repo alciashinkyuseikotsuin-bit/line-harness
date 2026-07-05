@@ -12,6 +12,7 @@ import {
   sendPersonalizedBlocks,
   type FriendForPersonalize,
 } from "@/lib/personalize";
+import { getAccountById, resolveToken, type LineAccount } from "@/lib/accounts";
 
 const FRIEND_SELECT = "id, line_user_id, display_name, points, stage";
 
@@ -63,8 +64,19 @@ async function runProcess() {
   let sent = 0;
   const errors: string[] = [];
 
+  // account_id ごとのアカウント情報をキャッシュ（同じアカウントへの重複問い合わせを避ける）
+  const accountCache = new Map<string, LineAccount | null>();
+  async function resolveAccountToken(accountId: string | null | undefined) {
+    if (!accountId) return resolveToken(null);
+    if (!accountCache.has(accountId)) {
+      accountCache.set(accountId, await getAccountById(supabase, accountId));
+    }
+    return resolveToken(accountCache.get(accountId) || null);
+  }
+
   for (const b of dueBroadcasts) {
     try {
+      const token = await resolveAccountToken(b.account_id);
       const blocks = b.message_blocks as MessageBlock[] | null;
       if (!blocks || blocks.length === 0) {
         // メッセージなし→失敗扱い
@@ -88,10 +100,14 @@ async function runProcess() {
       const personalize = blocksNeedPersonalization(blocks);
 
       if (b.target_type === "all") {
-        const { data: allFriends } = await supabase
+        let allFriendsQuery = supabase
           .from("friends")
           .select(FRIEND_SELECT)
           .eq("is_blocked", false);
+        if (b.account_id) {
+          allFriendsQuery = allFriendsQuery.eq("account_id", b.account_id);
+        }
+        const { data: allFriends } = await allFriendsQuery;
         const targets = (allFriends || []) as FriendForPersonalize[];
 
         if (personalize) {
@@ -99,10 +115,12 @@ async function runProcess() {
             supabase,
             targets,
             blocks,
-            "broadcast"
+            "broadcast",
+            undefined,
+            token
           );
         } else {
-          await broadcastMessages(lineMessages as unknown[] as never[]);
+          await broadcastMessages(lineMessages as unknown[] as never[], token);
           deliveredCount = targets.length;
           await logSent(supabase, targets, blocks);
         }
@@ -111,11 +129,15 @@ async function runProcess() {
         Array.isArray(b.target_tags) &&
         b.target_tags.length > 0
       ) {
-        const { data: friends } = await supabase
+        let friendsQuery = supabase
           .from("friends")
           .select(FRIEND_SELECT)
           .eq("is_blocked", false)
           .overlaps("tags", b.target_tags);
+        if (b.account_id) {
+          friendsQuery = friendsQuery.eq("account_id", b.account_id);
+        }
+        const { data: friends } = await friendsQuery;
         const targets = (friends || []) as FriendForPersonalize[];
 
         if (personalize) {
@@ -123,13 +145,15 @@ async function runProcess() {
             supabase,
             targets,
             blocks,
-            "broadcast"
+            "broadcast",
+            undefined,
+            token
           );
         } else {
           const userIds = targets.map((f) => f.line_user_id);
           for (let i = 0; i < userIds.length; i += 500) {
             const chunk = userIds.slice(i, i + 500);
-            await multicastMessages(chunk, lineMessages as unknown[] as never[]);
+            await multicastMessages(chunk, lineMessages as unknown[] as never[], token);
           }
           deliveredCount = targets.length;
           await logSent(supabase, targets, blocks);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +33,7 @@ export default function SegmentPage() {
   const [scheduling, setScheduling] = useState(false);
 
   useEffect(() => {
-    fetch("/api/friends")
+    apiFetch("/api/friends")
       .then((r) => r.json())
       .then((d) => {
         const friends = d.friends || [];
@@ -50,7 +51,7 @@ export default function SegmentPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
 
-    fetch("/api/surveys")
+    apiFetch("/api/surveys")
       .then((r) => r.json())
       .then((d) =>
         setSurveys(
@@ -65,7 +66,7 @@ export default function SegmentPage() {
       setMatchCount(0);
       return;
     }
-    fetch("/api/friends")
+    apiFetch("/api/friends")
       .then((r) => r.json())
       .then((d) => {
         const friends = d.friends || [];
@@ -94,7 +95,7 @@ export default function SegmentPage() {
     setSending(true);
     setResult(null);
     try {
-      const res = await fetch("/api/broadcast", {
+      const res = await apiFetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -132,7 +133,7 @@ export default function SegmentPage() {
     setScheduling(true);
     setResult(null);
     try {
-      const res = await fetch("/api/broadcast", {
+      const res = await apiFetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -168,7 +169,7 @@ export default function SegmentPage() {
       return;
     }
     try {
-      const res = await fetch("/api/broadcast", {
+      const res = await apiFetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -203,7 +204,7 @@ export default function SegmentPage() {
     setSending(true);
     setResult(null);
     try {
-      const res = await fetch("/api/broadcast", {
+      const res = await apiFetch("/api/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -179,7 +180,7 @@ export default function FriendDetailPage() {
 
   const loadFriend = useCallback(async () => {
     try {
-      const res = await fetch(`/api/friends/${id}`);
+      const res = await apiFetch(`/api/friends/${id}`);
       const data = await res.json();
       if (!res.ok) {
         setLoadError(data.error || "取得に失敗しました");
@@ -201,7 +202,7 @@ export default function FriendDetailPage() {
 
   useEffect(() => {
     loadFriend();
-    fetch("/api/tags")
+    apiFetch("/api/tags")
       .then((r) => r.json())
       .then((d) => setAllTags(d.tags || []))
       .catch(() => {});
@@ -211,7 +212,7 @@ export default function FriendDetailPage() {
     if (!friend) return;
     const prevStage = friend.stage;
     setFriend({ ...friend, stage });
-    const res = await fetch(`/api/friends/${id}`, {
+    const res = await apiFetch(`/api/friends/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ stage }),
@@ -227,7 +228,7 @@ export default function FriendDetailPage() {
   async function saveNotes() {
     setNotesSaving(true);
     try {
-      const res = await fetch(`/api/friends/${id}`, {
+      const res = await apiFetch(`/api/friends/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ notes: notesDraft }),
@@ -244,7 +245,7 @@ export default function FriendDetailPage() {
   async function addTag(override?: string) {
     const tag = (override ?? tagInput).trim();
     if (!tag) return;
-    const res = await fetch(`/api/friends/${id}/tags`, {
+    const res = await apiFetch(`/api/friends/${id}/tags`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tag }),
@@ -254,7 +255,7 @@ export default function FriendDetailPage() {
       setFriend((f) => (f ? { ...f, tags: data.tags } : f));
       setTagInput("");
       setShowTagInput(false);
-      fetch("/api/tags")
+      apiFetch("/api/tags")
         .then((r) => r.json())
         .then((d) => setAllTags(d.tags || []))
         .catch(() => {});
@@ -262,7 +263,7 @@ export default function FriendDetailPage() {
   }
 
   async function removeTag(tag: string) {
-    const res = await fetch(`/api/friends/${id}/tags`, {
+    const res = await apiFetch(`/api/friends/${id}/tags`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tag }),
@@ -284,7 +285,7 @@ export default function FriendDetailPage() {
     setAiLoading(level);
     setAiError(null);
     try {
-      const res = await fetch(`/api/friends/${id}/analyze`, {
+      const res = await apiFetch(`/api/friends/${id}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ level }),
@@ -314,7 +315,7 @@ export default function FriendDetailPage() {
     setSending(true);
     setSendError(null);
     try {
-      const res = await fetch(`/api/friends/${id}/message`, {
+      const res = await apiFetch(`/api/friends/${id}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: messageText }),

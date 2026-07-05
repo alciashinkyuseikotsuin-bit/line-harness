@@ -18,17 +18,76 @@ import {
   jstToday,
 } from "@/lib/engage";
 import { computeDiagnosisResult } from "@/lib/diagnosis";
+import {
+  getAccounts,
+  resolveSecret,
+  resolveToken,
+  type LineAccount,
+} from "@/lib/accounts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // LINE署名検証
-function verifySignature(body: string, signature: string): boolean {
-  const secret = process.env.LINE_CHANNEL_SECRET;
+function verifySignature(
+  body: string,
+  signature: string,
+  secret: string | undefined
+): boolean {
   if (!secret) return false;
   const hash = crypto
     .createHmac("SHA256", secret)
     .update(body)
     .digest("base64");
   return hash === signature;
+}
+
+/**
+ * どのLINEアカウント宛のWebhookかを特定する。
+ * 1. destination（Bot自身のuserId）が既知ならそのアカウントの秘密鍵で署名検証
+ * 2. 未知なら全アカウントの秘密鍵で検証を試し、一致したアカウントに destination を学習させる
+ * 3. line_accounts が空（migration未実行）なら環境変数で検証（従来動作）
+ */
+async function resolveWebhookAccount(
+  supabase: SupabaseClient,
+  body: string,
+  signature: string,
+  destination: string | undefined
+): Promise<{ account: LineAccount | null; ok: boolean }> {
+  const accounts = await getAccounts(supabase);
+
+  if (accounts.length === 0) {
+    // 従来動作（シングルアカウント・環境変数）
+    return {
+      account: null,
+      ok: verifySignature(body, signature, process.env.LINE_CHANNEL_SECRET),
+    };
+  }
+
+  // destination で特定できる場合
+  if (destination) {
+    const known = accounts.find((a) => a.destination_user_id === destination);
+    if (known) {
+      return {
+        account: known,
+        ok: verifySignature(body, signature, resolveSecret(known)),
+      };
+    }
+  }
+
+  // 全アカウントの秘密鍵で試す（初回受信時）
+  for (const account of accounts) {
+    if (verifySignature(body, signature, resolveSecret(account))) {
+      if (destination && account.destination_user_id !== destination) {
+        // destination を学習して次回から高速化
+        await supabase
+          .from("line_accounts")
+          .update({ destination_user_id: destination })
+          .eq("id", account.id);
+      }
+      return { account, ok: true };
+    }
+  }
+
+  return { account: null, ok: false };
 }
 
 type FriendRow = {
@@ -39,34 +98,38 @@ type FriendRow = {
   display_name: string | null;
 };
 
-// 友だちを取得。未登録ならプロフィールを取得して登録する
+// 友だちを取得。未登録ならプロフィールを取得して登録する（アカウント内で）
 async function findOrCreateFriend(
   supabase: SupabaseClient,
-  lineUserId: string
+  lineUserId: string,
+  account: LineAccount | null
 ): Promise<FriendRow | null> {
-  const { data: existing } = await supabase
+  let query = supabase
     .from("friends")
     .select("id, line_user_id, tags, pending_input, display_name")
-    .eq("line_user_id", lineUserId)
-    .single();
+    .eq("line_user_id", lineUserId);
+  if (account) query = query.eq("account_id", account.id);
+  const { data: existing } = await query.limit(1).maybeSingle();
   if (existing) return existing as FriendRow;
 
   try {
-    const profile = await getUserProfile(lineUserId);
+    const profile = await getUserProfile(lineUserId, resolveToken(account));
+    const row: Record<string, unknown> = {
+      line_user_id: lineUserId,
+      display_name: profile.displayName,
+      picture_url: profile.pictureUrl,
+      status_message: profile.statusMessage,
+      is_blocked: false,
+      joined_at: new Date().toISOString(),
+      last_active_at: new Date().toISOString(),
+    };
+    if (account) row.account_id = account.id;
+
     const { data: created } = await supabase
       .from("friends")
-      .upsert(
-        {
-          line_user_id: lineUserId,
-          display_name: profile.displayName,
-          picture_url: profile.pictureUrl,
-          status_message: profile.statusMessage,
-          is_blocked: false,
-          joined_at: new Date().toISOString(),
-          last_active_at: new Date().toISOString(),
-        },
-        { onConflict: "line_user_id" }
-      )
+      .upsert(row, {
+        onConflict: account ? "account_id,line_user_id" : "line_user_id",
+      })
       .select("id, line_user_id, tags, pending_input, display_name")
       .single();
     return created as FriendRow | null;
@@ -77,7 +140,6 @@ async function findOrCreateFriend(
 }
 
 // アンケートの次質問 or 完了処理（診断結果・完了メッセージ）を組み立てる
-// 戻り値: 送信するメッセージ配列と、診断で付与するタグ
 async function buildNextStepOrCompletion(
   supabase: SupabaseClient,
   surveyId: string,
@@ -171,34 +233,50 @@ export async function POST(request: NextRequest) {
   const body = await request.text();
   const signature = request.headers.get("x-line-signature") || "";
 
-  // 署名検証
-  if (!verifySignature(body, signature)) {
+  const parsed = JSON.parse(body) as {
+    destination?: string;
+    events: Record<string, any>[];
+  };
+  const supabase = getSupabaseAdmin();
+
+  // アカウント特定＋署名検証
+  const { account, ok } = await resolveWebhookAccount(
+    supabase,
+    body,
+    signature,
+    parsed.destination
+  );
+  if (!ok) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const { events } = JSON.parse(body);
-  const supabase = getSupabaseAdmin();
+  const accountId = account?.id;
+  const token = resolveToken(account);
+  const events = parsed.events || [];
 
   for (const event of events) {
     try {
       switch (event.type) {
         case "follow": {
           // 友だち追加
-          const profile = await getUserProfile(event.source.userId);
+          const profile = await getUserProfile(event.source.userId, token);
+          const row: Record<string, unknown> = {
+            line_user_id: event.source.userId,
+            display_name: profile.displayName,
+            picture_url: profile.pictureUrl,
+            status_message: profile.statusMessage,
+            is_blocked: false,
+            joined_at: new Date().toISOString(),
+            last_active_at: new Date().toISOString(),
+          };
+          if (accountId) row.account_id = accountId;
           const { data: followed } = await supabase
             .from("friends")
-            .upsert(
-              {
-                line_user_id: event.source.userId,
-                display_name: profile.displayName,
-                picture_url: profile.pictureUrl,
-                status_message: profile.statusMessage,
-                is_blocked: false,
-                joined_at: new Date().toISOString(),
-                last_active_at: new Date().toISOString(),
-              },
-              { onConflict: "line_user_id" }
-            )
+            .upsert(row, {
+              onConflict: accountId
+                ? "account_id,line_user_id"
+                : "line_user_id",
+            })
             .select("id")
             .single();
           if (followed) {
@@ -209,14 +287,14 @@ export async function POST(request: NextRequest) {
 
         case "unfollow": {
           // ブロック
-          const { data: unfollowed } = await supabase
+          let unfollowQuery = supabase
             .from("friends")
             .update({ is_blocked: true })
-            .eq("line_user_id", event.source.userId)
-            .select("id")
-            .single();
-          if (unfollowed) {
-            await logEvent(supabase, unfollowed.id, "unfollow", {});
+            .eq("line_user_id", event.source.userId);
+          if (accountId) unfollowQuery = unfollowQuery.eq("account_id", accountId);
+          const { data: unfollowed } = await unfollowQuery.select("id").limit(1);
+          if (unfollowed && unfollowed[0]) {
+            await logEvent(supabase, unfollowed[0].id, "unfollow", {});
           }
           break;
         }
@@ -230,7 +308,7 @@ export async function POST(request: NextRequest) {
           const choiceId = pbData.get("choice");
 
           if (surveyId && questionId && choiceId && pbUserId) {
-            const friend = await findOrCreateFriend(supabase, pbUserId);
+            const friend = await findOrCreateFriend(supabase, pbUserId, account);
             if (!friend) break;
 
             // 回答を保存
@@ -332,7 +410,7 @@ export async function POST(request: NextRequest) {
 
             if (messagesToSend.length > 0) {
               try {
-                await pushMessages(pbUserId, messagesToSend);
+                await pushMessages(pbUserId, messagesToSend, token);
                 await logMessage(supabase, friend.id, {
                   direction: "out",
                   content: messagesToSend
@@ -350,9 +428,9 @@ export async function POST(request: NextRequest) {
             }
 
             // バックグラウンド処理: ステップフロー登録・ポイント付与・スコア再計算
-            const rules = await getPointRules(supabase);
+            const rules = await getPointRules(supabase, accountId);
             const bgTasks: Promise<unknown>[] = [
-              enrollMatchingStepFlows(supabase, friend.id, updatedTags),
+              enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId),
             ];
             if (rules.survey_answer > 0) {
               bgTasks.push(
@@ -386,7 +464,7 @@ export async function POST(request: NextRequest) {
           const userId = event.source.userId;
           if (!userId) break;
 
-          const friend = await findOrCreateFriend(supabase, userId);
+          const friend = await findOrCreateFriend(supabase, userId, account);
           if (!friend) break;
 
           const isText = event.message?.type === "text" && !!event.message?.text;
@@ -419,7 +497,7 @@ export async function POST(request: NextRequest) {
             .update({ last_active_at: new Date().toISOString() })
             .eq("id", friend.id);
 
-          const rules = await getPointRules(supabase);
+          const rules = await getPointRules(supabase, accountId);
 
           // === 1) 自由記入待ち（アンケートの「その他」入力）===
           const pendingInput = friend.pending_input as {
@@ -446,14 +524,14 @@ export async function POST(request: NextRequest) {
               .eq("id", friend.id);
 
             const ackText = `「${inputText}」で登録しました！ありがとうございます。`;
-            await pushMessage(userId, ackText);
+            await pushMessage(userId, ackText, token);
             await logMessage(supabase, friend.id, {
               direction: "out",
               content: ackText,
               source: "survey",
             });
 
-            await enrollMatchingStepFlows(supabase, friend.id, updatedTags);
+            await enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId);
 
             // 自由記入が含まれていたアンケートの次質問 / 完了メッセージ
             if (pendingInput.survey_id && pendingInput.question_id) {
@@ -470,10 +548,15 @@ export async function POST(request: NextRequest) {
                     .from("friends")
                     .update({ tags: withDiagTag })
                     .eq("id", friend.id);
-                  await enrollMatchingStepFlows(supabase, friend.id, withDiagTag);
+                  await enrollMatchingStepFlows(
+                    supabase,
+                    friend.id,
+                    withDiagTag,
+                    accountId
+                  );
                 }
                 if (nextStep.messages.length > 0) {
-                  await pushMessages(userId, nextStep.messages);
+                  await pushMessages(userId, nextStep.messages, token);
                 }
               } catch (nextErr) {
                 console.error("自由記入後の次質問/完了送信エラー:", nextErr);
@@ -488,7 +571,7 @@ export async function POST(request: NextRequest) {
             const builtin = detectBuiltinCommand(inboundText);
 
             if (builtin === "omikuji") {
-              const result = await drawOmikuji(supabase, friend.id);
+              const result = await drawOmikuji(supabase, friend.id, accountId);
               let replyText: string;
               if (result.status === "drawn") {
                 replyText = `⛩️ 今日の運勢は…\n\n【${result.fortune}】\n\n${result.message}`;
@@ -511,7 +594,7 @@ export async function POST(request: NextRequest) {
               } else {
                 replyText = "おみくじは準備中です。もう少しお待ちください！";
               }
-              await pushMessage(userId, replyText);
+              await pushMessage(userId, replyText, token);
               await logMessage(supabase, friend.id, {
                 direction: "out",
                 content: replyText,
@@ -529,21 +612,25 @@ export async function POST(request: NextRequest) {
                 .single();
               const pts = f?.points || 0;
 
-              // 次の特典までの残りを案内
-              const { data: nextReward } = await supabase
+              // 次の特典までの残りを案内（同じアカウントの特典のみ）
+              let nextRewardQuery = supabase
                 .from("point_rewards")
                 .select("threshold, title")
                 .eq("active", true)
                 .gt("threshold", pts)
                 .order("threshold", { ascending: true })
-                .limit(1)
-                .single();
+                .limit(1);
+              if (accountId) {
+                nextRewardQuery = nextRewardQuery.eq("account_id", accountId);
+              }
+              const { data: nextRewards } = await nextRewardQuery;
+              const nextReward = nextRewards?.[0];
 
               let replyText = `💎 ${friend.display_name || "あなた"}さんの現在のポイント：${pts}pt`;
               if (nextReward) {
                 replyText += `\n\n次の特典「${nextReward.title}」まであと ${nextReward.threshold - pts}pt！`;
               }
-              await pushMessage(userId, replyText);
+              await pushMessage(userId, replyText, token);
               await logMessage(supabase, friend.id, {
                 direction: "out",
                 content: replyText,
@@ -553,9 +640,14 @@ export async function POST(request: NextRequest) {
             }
 
             // === 3) キーワード自動応答 ===
-            const autoReply = await findAutoReply(supabase, friend.id, inboundText);
+            const autoReply = await findAutoReply(
+              supabase,
+              friend.id,
+              inboundText,
+              accountId
+            );
             if (autoReply) {
-              await pushMessage(userId, autoReply.reply_text);
+              await pushMessage(userId, autoReply.reply_text, token);
               await logMessage(supabase, friend.id, {
                 direction: "out",
                 content: autoReply.reply_text,
@@ -581,7 +673,12 @@ export async function POST(request: NextRequest) {
                     .from("friends")
                     .update({ tags: merged })
                     .eq("id", friend.id);
-                  await enrollMatchingStepFlows(supabase, friend.id, merged);
+                  await enrollMatchingStepFlows(
+                    supabase,
+                    friend.id,
+                    merged,
+                    accountId
+                  );
                 }
               }
 

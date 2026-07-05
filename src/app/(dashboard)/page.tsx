@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,7 +34,7 @@ export default function DashboardPage() {
   const [recalcing, setRecalcing] = useState(false);
 
   const loadStats = () => {
-    fetch("/api/stats")
+    apiFetch("/api/stats")
       .then((r) => r.json())
       .then(setStats)
       .catch(console.error);
@@ -46,7 +47,7 @@ export default function DashboardPage() {
   const handleRecalc = async () => {
     setRecalcing(true);
     try {
-      await fetch("/api/stats/recalc", { method: "POST" });
+      await apiFetch("/api/stats/recalc", { method: "POST" });
       loadStats();
     } catch (e) {
       console.error(e);

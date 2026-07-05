@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -76,7 +77,7 @@ export default function StepPage() {
   const [editingFlowId, setEditingFlowId] = useState<string | null>(null);
 
   function loadFlows() {
-    fetch("/api/step-flows")
+    apiFetch("/api/step-flows")
       .then((r) => r.json())
       .then((d) => setFlows(d.flows || []))
       .catch(console.error)
@@ -85,11 +86,11 @@ export default function StepPage() {
 
   useEffect(() => {
     loadFlows();
-    fetch("/api/tags")
+    apiFetch("/api/tags")
       .then((r) => r.json())
       .then((d) => setAllTags(d.tags || []))
       .catch(() => {});
-    fetch("/api/surveys")
+    apiFetch("/api/surveys")
       .then((r) => r.json())
       .then((d) =>
         setSurveys(
@@ -123,7 +124,7 @@ export default function StepPage() {
 
   // 編集モードでフローを読み込む
   async function openFlowForEdit(flowId: string) {
-    const res = await fetch(`/api/step-flows/${flowId}`);
+    const res = await apiFetch(`/api/step-flows/${flowId}`);
     const data = await res.json();
     if (!res.ok || !data.flow) {
       alert(data.error || "フローの読み込みに失敗しました");
@@ -188,13 +189,13 @@ export default function StepPage() {
           patchPayload.status = "draft";
         }
         delete (patchPayload as Record<string, unknown>).saveAsDraft;
-        res = await fetch(`/api/step-flows/${editingFlowId}`, {
+        res = await apiFetch(`/api/step-flows/${editingFlowId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patchPayload),
         });
       } else {
-        res = await fetch("/api/step-flows", {
+        res = await apiFetch("/api/step-flows", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -226,7 +227,7 @@ export default function StepPage() {
 
   async function toggleStatus(flow: StepFlow) {
     const newStatus = flow.status === "active" ? "paused" : "active";
-    await fetch(`/api/step-flows/${flow.id}`, {
+    await apiFetch(`/api/step-flows/${flow.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus }),
@@ -235,7 +236,7 @@ export default function StepPage() {
   }
 
   async function deleteFlow(id: string) {
-    await fetch(`/api/step-flows/${id}`, { method: "DELETE" });
+    await apiFetch(`/api/step-flows/${id}`, { method: "DELETE" });
     loadFlows();
   }
 

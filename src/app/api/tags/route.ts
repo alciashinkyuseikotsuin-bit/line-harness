@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 // 既存実装互換: GET は tagsマスタ ∪ friends.tags の集計結果を name のみで返却
 // /broadcast/segment, /broadcast/step が依存しているので形は崩さない
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
   // friends 集計
-  const { data: friends } = await supabase
+  let friendsQuery = supabase
     .from("friends")
     .select("tags")
     .eq("is_blocked", false);
+  if (accountId) {
+    friendsQuery = friendsQuery.eq("account_id", accountId);
+  }
+  const { data: friends } = await friendsQuery;
 
   const friendTagCounts = new Map<string, number>();
   (friends || []).forEach((f: { tags: string[] | null }) => {
@@ -20,9 +27,11 @@ export async function GET() {
   });
 
   // tagsマスタ
-  const { data: masterTags } = await supabase
-    .from("tags")
-    .select("name");
+  let masterTagsQuery = supabase.from("tags").select("name");
+  if (accountId) {
+    masterTagsQuery = masterTagsQuery.eq("account_id", accountId);
+  }
+  const { data: masterTags } = await masterTagsQuery;
 
   const allNames = new Set<string>(friendTagCounts.keys());
   (masterTags || []).forEach((t: { name: string }) => allNames.add(t.name));
@@ -48,11 +57,13 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
   // 既存重複は ON CONFLICT で無視
   const { error } = await supabase
     .from("tags")
-    .insert({ name })
+    .insert({ name, account_id: accountId ?? null })
     .select()
     .single();
 
@@ -73,11 +84,14 @@ export async function DELETE(request: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { error } = await supabase
-    .from("tags")
-    .delete()
-    .eq("name", name);
+  let deleteQuery = supabase.from("tags").delete().eq("name", name);
+  if (accountId) {
+    deleteQuery = deleteQuery.eq("account_id", accountId);
+  }
+  const { error } = await deleteQuery;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

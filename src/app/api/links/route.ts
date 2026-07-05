@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 const CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
@@ -27,13 +28,19 @@ async function generateUniqueCode(supabase: SupabaseClient): Promise<string> {
 }
 
 // 計測リンク 一覧取得（クリック数・直近クリック日時つき）
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data: links, error } = await supabase
+  let linksQuery = supabase
     .from("tracked_links")
     .select("*")
     .order("created_at", { ascending: false });
+  if (accountId) {
+    linksQuery = linksQuery.eq("account_id", accountId);
+  }
+  const { data: links, error } = await linksQuery;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -81,6 +88,8 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
   const code = await generateUniqueCode(supabase);
 
   const { data, error } = await supabase
@@ -91,6 +100,7 @@ export async function POST(request: NextRequest) {
       dest_url: trimmedUrl,
       add_tag: typeof add_tag === "string" && add_tag.trim() ? add_tag.trim() : null,
       points: Number.isFinite(points) ? points : 0,
+      account_id: accountId ?? null,
     })
     .select()
     .single();

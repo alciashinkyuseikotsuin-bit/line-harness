@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 // ポイント特典 一覧取得（受領人数つき）
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data: rewards, error } = await supabase
+  let rewardsQuery = supabase
     .from("point_rewards")
     .select("*")
     .order("threshold", { ascending: true });
+  if (accountId) {
+    rewardsQuery = rewardsQuery.eq("account_id", accountId);
+  }
+  const { data: rewards, error } = await rewardsQuery;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -51,6 +58,8 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
   const { data, error } = await supabase
     .from("point_rewards")
@@ -60,6 +69,7 @@ export async function POST(request: NextRequest) {
       message: trimmedMessage,
       add_tag: typeof add_tag === "string" && add_tag.trim() ? add_tag.trim() : null,
       active: active === undefined ? true : !!active,
+      account_id: accountId ?? null,
     })
     .select()
     .single();

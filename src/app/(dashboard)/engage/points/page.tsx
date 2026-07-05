@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,7 +88,7 @@ export default function PointsPage() {
   const [rankingLoading, setRankingLoading] = useState(true);
 
   function loadRules() {
-    fetch("/api/points/settings")
+    apiFetch("/api/points/settings")
       .then((r) => r.json())
       .then((d) => setRules(d.rules))
       .catch(console.error);
@@ -95,7 +96,7 @@ export default function PointsPage() {
 
   function loadRewards() {
     setRewardsLoading(true);
-    fetch("/api/rewards")
+    apiFetch("/api/rewards")
       .then((r) => r.json())
       .then((d) => setRewards(d.rewards || []))
       .catch(console.error)
@@ -104,7 +105,7 @@ export default function PointsPage() {
 
   function loadRanking() {
     setRankingLoading(true);
-    fetch("/api/points/ranking")
+    apiFetch("/api/points/ranking")
       .then((r) => r.json())
       .then((d) => setRanking(d.ranking || []))
       .catch(console.error)
@@ -122,7 +123,7 @@ export default function PointsPage() {
     setRulesSaving(true);
     setRulesSaved(false);
     try {
-      const res = await fetch("/api/points/settings", {
+      const res = await apiFetch("/api/points/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(rules),
@@ -167,7 +168,7 @@ export default function PointsPage() {
 
     setRewardSaving(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         editingRewardId ? `/api/rewards/${editingRewardId}` : "/api/rewards",
         {
           method: editingRewardId ? "PUT" : "POST",
@@ -188,7 +189,7 @@ export default function PointsPage() {
   }
 
   async function deleteReward(id: string) {
-    const res = await fetch(`/api/rewards/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/rewards/${id}`, { method: "DELETE" });
     if (res.ok) {
       setConfirmDeleteReward(null);
       if (editingRewardId === id) cancelEditReward();

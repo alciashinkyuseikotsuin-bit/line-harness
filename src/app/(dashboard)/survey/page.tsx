@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -59,7 +60,7 @@ export default function SurveyListPage() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   function loadSurveys() {
-    fetch("/api/surveys")
+    apiFetch("/api/surveys")
       .then((r) => r.json())
       .then((d) => setSurveys(d.surveys || []))
       .catch(console.error)
@@ -71,7 +72,7 @@ export default function SurveyListPage() {
   }, []);
 
   async function deleteSurvey(id: string) {
-    const res = await fetch(`/api/surveys/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/surveys/${id}`, { method: "DELETE" });
     if (res.ok) {
       setConfirmDelete(null);
       loadSurveys();

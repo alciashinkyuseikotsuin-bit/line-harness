@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,7 +53,7 @@ export default function AutoRepliesPage() {
 
   function loadReplies() {
     setLoading(true);
-    fetch("/api/auto-replies")
+    apiFetch("/api/auto-replies")
       .then((r) => r.json())
       .then((d) => setReplies(d.replies || []))
       .catch(console.error)
@@ -100,7 +101,7 @@ export default function AutoRepliesPage() {
 
     setSaving(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         editingId ? `/api/auto-replies/${editingId}` : "/api/auto-replies",
         {
           method: editingId ? "PUT" : "POST",
@@ -121,7 +122,7 @@ export default function AutoRepliesPage() {
   }
 
   async function deleteReply(id: string) {
-    const res = await fetch(`/api/auto-replies/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/auto-replies/${id}`, { method: "DELETE" });
     if (res.ok) {
       setConfirmDelete(null);
       if (editingId === id) cancelEdit();

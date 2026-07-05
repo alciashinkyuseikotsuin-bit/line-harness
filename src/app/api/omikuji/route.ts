@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { jstToday } from "@/lib/engage";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 // おみくじ項目 一覧取得（今月の抽選数つき）
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data: items, error } = await supabase
+  let itemsQuery = supabase
     .from("omikuji_items")
     .select("*")
     .order("created_at", { ascending: true });
+  if (accountId) {
+    itemsQuery = itemsQuery.eq("account_id", accountId);
+  }
+  const { data: items, error } = await itemsQuery;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -53,6 +60,8 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
   const { data, error } = await supabase
     .from("omikuji_items")
@@ -61,6 +70,7 @@ export async function POST(request: NextRequest) {
       message: trimmedMessage,
       weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
       active: active === undefined ? true : !!active,
+      account_id: accountId ?? null,
     })
     .select()
     .single();

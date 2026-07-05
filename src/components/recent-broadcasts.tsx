@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import {
   Card,
   CardContent,
@@ -36,7 +37,7 @@ export function RecentBroadcasts() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
 
   useEffect(() => {
-    fetch("/api/broadcast")
+    apiFetch("/api/broadcast")
       .then((r) => r.json())
       .then((d) => setBroadcasts((d.broadcasts || []).slice(0, 5)))
       .catch(console.error);

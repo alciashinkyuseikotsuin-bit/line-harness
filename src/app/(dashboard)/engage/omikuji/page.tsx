@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +44,7 @@ export default function OmikujiPage() {
 
   function loadItems() {
     setLoading(true);
-    fetch("/api/omikuji")
+    apiFetch("/api/omikuji")
       .then((r) => r.json())
       .then((d) => setItems(d.items || []))
       .catch(console.error)
@@ -81,7 +82,7 @@ export default function OmikujiPage() {
 
     setSaving(true);
     try {
-      const res = await fetch(editingId ? `/api/omikuji/${editingId}` : "/api/omikuji", {
+      const res = await apiFetch(editingId ? `/api/omikuji/${editingId}` : "/api/omikuji", {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -99,7 +100,7 @@ export default function OmikujiPage() {
   }
 
   async function deleteItem(id: string) {
-    const res = await fetch(`/api/omikuji/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/omikuji/${id}`, { method: "DELETE" });
     if (res.ok) {
       setConfirmDelete(null);
       if (editingId === id) cancelEdit();

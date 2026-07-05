@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 export type PointRules = {
   survey_answer: number;
@@ -20,14 +21,19 @@ const DEFAULT_RULES: PointRules = {
 };
 
 // ポイント付与ルール取得
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("app_settings")
     .select("value")
-    .eq("key", "point_rules")
-    .maybeSingle();
+    .eq("key", "point_rules");
+  if (accountId) {
+    query = query.eq("account_id", accountId);
+  }
+  const { data, error } = await query.maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -50,12 +56,21 @@ export async function PUT(request: NextRequest) {
   };
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { error } = await supabase.from("app_settings").upsert({
+  // アカウント指定時は account_id+key で一意にupsert。未指定時は従来通り key のみ（後方互換）
+  const payload: Record<string, unknown> = {
     key: "point_rules",
     value: rules,
     updated_at: new Date().toISOString(),
-  });
+  };
+
+  const { error } = accountId
+    ? await supabase
+        .from("app_settings")
+        .upsert({ ...payload, account_id: accountId }, { onConflict: "account_id,key" })
+    : await supabase.from("app_settings").upsert(payload);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

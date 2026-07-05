@@ -21,12 +21,32 @@ type StepFlowRow = {
 export async function enrollMatchingStepFlows(
   supabase: SupabaseClient,
   friendId: string,
-  friendTags: string[]
+  friendTags: string[],
+  accountId?: string
 ): Promise<void> {
-  const { data: flows } = await supabase
+  // アカウント未指定なら友だちから引く（同じアカウントのフローだけに登録する）
+  let effectiveAccountId = accountId;
+  if (!effectiveAccountId) {
+    try {
+      const { data: f } = await supabase
+        .from("friends")
+        .select("account_id")
+        .eq("id", friendId)
+        .single();
+      effectiveAccountId = f?.account_id || undefined;
+    } catch {
+      // migration 007 未実行なら全フロー対象（従来動作）
+    }
+  }
+
+  let flowQuery = supabase
     .from("step_flows")
     .select("id, trigger_tag, trigger_tags, trigger_match_mode")
     .eq("status", "active");
+  if (effectiveAccountId) {
+    flowQuery = flowQuery.eq("account_id", effectiveAccountId);
+  }
+  const { data: flows } = await flowQuery;
 
   if (!flows || flows.length === 0) return;
 

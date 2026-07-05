@@ -14,9 +14,10 @@ import {
   sendPersonalizedBlocks,
   type FriendForPersonalize,
 } from "@/lib/personalize";
+import { getAccountFromRequest, resolveToken } from "@/lib/accounts";
 
-// 配信対象の友だち情報（個別化・ログ用）
-const FRIEND_SELECT = "id, line_user_id, display_name, points, stage";
+// 配信対象の友だち情報（個別化・ログ用。account_id はアカウント跨ぎ配信ブロックに使用）
+const FRIEND_SELECT = "id, line_user_id, display_name, points, stage, account_id";
 
 // 送信後のログ記録（一括）
 async function logBroadcastSent(
@@ -39,13 +40,21 @@ async function logBroadcastSent(
 }
 
 // 配信一覧取得
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("broadcasts")
     .select("*")
     .order("created_at", { ascending: false });
+
+  if (accountId) {
+    query = query.eq("account_id", accountId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -60,6 +69,9 @@ export async function POST(request: NextRequest) {
   const { title, message, blocks, targetType, targetTags, targetChoiceId, saveAsDraft, scheduledAt } = body;
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
+  const token = resolveToken(account);
 
   // 予約配信モード: scheduledAt が未来時刻なら status='scheduled' で保存
   if (scheduledAt) {
@@ -89,6 +101,7 @@ export async function POST(request: NextRequest) {
         target_choice_id: targetChoiceId || null,
         status: "scheduled",
         scheduled_at: scheduledDate.toISOString(),
+        account_id: accountId ?? null,
       })
       .select()
       .single();
@@ -118,6 +131,7 @@ export async function POST(request: NextRequest) {
         target_tags: Array.isArray(targetTags) ? targetTags : [],
         target_choice_id: targetChoiceId || null,
         status: "draft",
+        account_id: accountId ?? null,
       })
       .select()
       .single();
@@ -142,11 +156,15 @@ export async function POST(request: NextRequest) {
       !!blocks && blocksNeedPersonalization(blocks as MessageBlock[]);
 
     if (targetType === "all") {
-      // 全友だちに一斉配信
-      const { data: allFriends } = await supabase
+      // 全友だちに一斉配信（アカウント指定時はそのアカウントの友だちのみ）
+      let allFriendsQuery = supabase
         .from("friends")
         .select(FRIEND_SELECT)
         .eq("is_blocked", false);
+      if (accountId) {
+        allFriendsQuery = allFriendsQuery.eq("account_id", accountId);
+      }
+      const { data: allFriends } = await allFriendsQuery;
       const targets = (allFriends || []) as FriendForPersonalize[];
 
       if (personalize) {
@@ -154,24 +172,30 @@ export async function POST(request: NextRequest) {
           supabase,
           targets,
           blocks as MessageBlock[],
-          "broadcast"
+          "broadcast",
+          undefined,
+          token
         );
       } else {
         if (lineMessages && lineMessages.length > 0) {
-          await broadcastMessages(lineMessages as any[]);
+          await broadcastMessages(lineMessages as any[], token);
         } else if (message) {
-          await broadcastMessage(message);
+          await broadcastMessage(message, token);
         }
         deliveredCount = targets.length;
         await logBroadcastSent(supabase, targets, blocks || null, message);
       }
     } else if (targetType === "segment" && targetTags?.length > 0) {
       // タグベースのセグメント配信
-      const { data: friends } = await supabase
+      let friendsQuery = supabase
         .from("friends")
         .select(FRIEND_SELECT)
         .eq("is_blocked", false)
         .overlaps("tags", targetTags);
+      if (accountId) {
+        friendsQuery = friendsQuery.eq("account_id", accountId);
+      }
+      const { data: friends } = await friendsQuery;
       const targets = (friends || []) as FriendForPersonalize[];
 
       if (targets.length > 0) {
@@ -180,7 +204,9 @@ export async function POST(request: NextRequest) {
             supabase,
             targets,
             blocks as MessageBlock[],
-            "broadcast"
+            "broadcast",
+            undefined,
+            token
           );
         } else {
           const userIds = targets.map((f) => f.line_user_id);
@@ -188,9 +214,9 @@ export async function POST(request: NextRequest) {
           for (let i = 0; i < userIds.length; i += 500) {
             const chunk = userIds.slice(i, i + 500);
             if (lineMessages && lineMessages.length > 0) {
-              await multicastMessages(chunk, lineMessages as any[]);
+              await multicastMessages(chunk, lineMessages as any[], token);
             } else if (message) {
-              await multicastMessage(chunk, message);
+              await multicastMessage(chunk, message, token);
             }
           }
           deliveredCount = targets.length;
@@ -205,25 +231,32 @@ export async function POST(request: NextRequest) {
         .eq("choice_id", targetChoiceId);
 
       if (responses && responses.length > 0) {
-        const targets = responses
+        let targets = responses
           .map((r: any) => r.friends)
           .filter(Boolean) as FriendForPersonalize[];
+        if (accountId) {
+          targets = targets.filter(
+            (f: any) => !f.account_id || f.account_id === accountId
+          );
+        }
 
         if (personalize) {
           deliveredCount = await sendPersonalizedBlocks(
             supabase,
             targets,
             blocks as MessageBlock[],
-            "broadcast"
+            "broadcast",
+            undefined,
+            token
           );
         } else {
           const userIds = targets.map((f) => f.line_user_id);
           for (let i = 0; i < userIds.length; i += 500) {
             const chunk = userIds.slice(i, i + 500);
             if (lineMessages && lineMessages.length > 0) {
-              await multicastMessages(chunk, lineMessages as any[]);
+              await multicastMessages(chunk, lineMessages as any[], token);
             } else if (message) {
-              await multicastMessage(chunk, message);
+              await multicastMessage(chunk, message, token);
             }
           }
           deliveredCount = targets.length;
@@ -252,6 +285,7 @@ export async function POST(request: NextRequest) {
         status: "sent",
         sent_at: new Date().toISOString(),
         delivered_count: deliveredCount,
+        account_id: accountId ?? null,
       })
       .select()
       .single();

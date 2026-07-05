@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { pushMessage } from "@/lib/line";
 import { logMessage, logEvent } from "@/lib/logging";
+import { getAccountForFriend, resolveToken } from "@/lib/accounts";
 
 // 顧客カルテからの1:1手動送信（管理者がボタンを押した時のみ実行。自動送信ではない）
 export async function POST(
@@ -35,7 +36,9 @@ export async function POST(
   }
 
   try {
-    await pushMessage(friend.line_user_id, text);
+    const account = await getAccountForFriend(supabase, id);
+    const token = resolveToken(account);
+    await pushMessage(friend.line_user_id, text, token);
   } catch (err) {
     console.error("1:1送信失敗:", err);
     return NextResponse.json(

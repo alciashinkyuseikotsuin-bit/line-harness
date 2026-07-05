@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +48,7 @@ export default function LinksPage() {
 
   function loadLinks() {
     setLoading(true);
-    fetch("/api/links")
+    apiFetch("/api/links")
       .then((r) => r.json())
       .then((d) => setLinks(d.links || []))
       .catch(console.error)
@@ -80,7 +81,7 @@ export default function LinksPage() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         editingId ? `/api/links/${editingId}` : "/api/links",
         {
           method: editingId ? "PUT" : "POST",
@@ -114,7 +115,7 @@ export default function LinksPage() {
       return;
     }
     setConfirmDelete(null);
-    await fetch(`/api/links/${id}`, { method: "DELETE" });
+    await apiFetch(`/api/links/${id}`, { method: "DELETE" });
     loadLinks();
   }
 

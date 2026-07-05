@@ -1,11 +1,12 @@
 import { messagingApi } from "@line/bot-sdk";
 import type { MessageBlock } from "@/types/blocks";
 
-export function getLineClient() {
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+// accessToken 省略時は環境変数（メインアカウント）を使う
+export function getLineClient(accessToken?: string) {
+  const token = accessToken || process.env.LINE_CHANNEL_ACCESS_TOKEN;
   if (!token) {
     throw new Error(
-      "LINE_CHANNEL_ACCESS_TOKEN が設定されていません。.env.local を確認してください。"
+      "LINEのチャネルアクセストークンが設定されていません。アカウント設定または .env.local を確認してください。"
     );
   }
   return new messagingApi.MessagingApiClient({
@@ -47,22 +48,22 @@ export function blocksToLineMessages(blocks: MessageBlock[]): any[] {
 }
 
 // 全友だちに一斉配信（テキスト単体 - 後方互換）
-export async function broadcastMessage(text: string) {
-  const client = getLineClient();
+export async function broadcastMessage(text: string, token?: string) {
+  const client = getLineClient(token);
   return client.broadcast({
     messages: [{ type: "text", text }],
   });
 }
 
 // 全友だちに一斉配信（複数ブロック対応）
-export async function broadcastMessages(messages: any[]) {
-  const client = getLineClient();
+export async function broadcastMessages(messages: any[], token?: string) {
+  const client = getLineClient(token);
   return client.broadcast({ messages });
 }
 
 // 特定ユーザーにプッシュ送信（テキスト単体 - 後方互換）
-export async function pushMessage(userId: string, text: string) {
-  const client = getLineClient();
+export async function pushMessage(userId: string, text: string, token?: string) {
+  const client = getLineClient(token);
   return client.pushMessage({
     to: userId,
     messages: [{ type: "text", text }],
@@ -70,8 +71,8 @@ export async function pushMessage(userId: string, text: string) {
 }
 
 // 特定ユーザーにプッシュ送信（複数ブロック対応）
-export async function pushMessages(userId: string, messages: any[]) {
-  const client = getLineClient();
+export async function pushMessages(userId: string, messages: any[], token?: string) {
+  const client = getLineClient(token);
   return client.pushMessage({
     to: userId,
     messages,
@@ -79,9 +80,9 @@ export async function pushMessages(userId: string, messages: any[]) {
 }
 
 // 複数ユーザーにマルチキャスト送信（テキスト単体 - 後方互換）
-export async function multicastMessage(userIds: string[], text: string) {
+export async function multicastMessage(userIds: string[], text: string, token?: string) {
   if (userIds.length === 0) return;
-  const client = getLineClient();
+  const client = getLineClient(token);
   return client.multicast({
     to: userIds,
     messages: [{ type: "text", text }],
@@ -89,9 +90,9 @@ export async function multicastMessage(userIds: string[], text: string) {
 }
 
 // 複数ユーザーにマルチキャスト送信（複数ブロック対応）
-export async function multicastMessages(userIds: string[], messages: any[]) {
+export async function multicastMessages(userIds: string[], messages: any[], token?: string) {
   if (userIds.length === 0) return;
-  const client = getLineClient();
+  const client = getLineClient(token);
   return client.multicast({
     to: userIds,
     messages,
@@ -166,9 +167,10 @@ export async function sendSurveyMessage(
   surveyId: string,
   questionId: string,
   questionText: string,
-  choices: { id: string; text: string }[]
+  choices: { id: string; text: string }[],
+  token?: string
 ) {
-  const client = getLineClient();
+  const client = getLineClient(token);
   return client.pushMessage({
     to: userId,
     messages: [
@@ -178,7 +180,7 @@ export async function sendSurveyMessage(
 }
 
 // ユーザープロフィール取得
-export async function getUserProfile(userId: string) {
-  const client = getLineClient();
+export async function getUserProfile(userId: string, token?: string) {
+  const client = getLineClient(token);
   return client.getProfile(userId);
 }

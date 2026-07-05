@@ -19,13 +19,16 @@ export type AutoReply = {
 export async function findAutoReply(
   supabase: SupabaseClient,
   friendId: string,
-  text: string
+  text: string,
+  accountId?: string
 ): Promise<AutoReply | null> {
-  const { data: replies } = await supabase
+  let replyQuery = supabase
     .from("auto_replies")
     .select("*")
     .eq("active", true)
     .order("priority", { ascending: false });
+  if (accountId) replyQuery = replyQuery.eq("account_id", accountId);
+  const { data: replies } = await replyQuery;
 
   if (!replies || replies.length === 0) return null;
 
@@ -71,7 +74,8 @@ export type OmikujiResult =
  */
 export async function drawOmikuji(
   supabase: SupabaseClient,
-  friendId: string
+  friendId: string,
+  accountId?: string
 ): Promise<OmikujiResult> {
   const today = jstToday();
 
@@ -83,10 +87,12 @@ export async function drawOmikuji(
     .eq("drawn_on", today);
   if ((count || 0) > 0) return { status: "already" };
 
-  const { data: items } = await supabase
+  let itemQuery = supabase
     .from("omikuji_items")
     .select("id, fortune, message, weight")
     .eq("active", true);
+  if (accountId) itemQuery = itemQuery.eq("account_id", accountId);
+  const { data: items } = await itemQuery;
   if (!items || items.length === 0) return { status: "empty" };
 
   // 重み付き抽選

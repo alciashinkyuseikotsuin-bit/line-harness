@@ -3,17 +3,18 @@ import { getSupabaseAdmin } from "@/lib/supabase";
 import { pushMessage } from "@/lib/line";
 import { logMessage } from "@/lib/logging";
 import { renderTemplate, type FriendForPersonalize } from "@/lib/personalize";
+import { getAccountById, resolveToken, type LineAccount } from "@/lib/accounts";
 
 // ステップ配信の実行（定期実行用）
 export async function POST() {
   const supabase = getSupabaseAdmin();
   const now = new Date().toISOString();
 
-  // 送信すべきエンロールメントを取得
+  // 送信すべきエンロールメントを取得（フローのaccount_idも合わせて取得しトークン解決に使う）
   const { data: enrollments, error } = await supabase
     .from("step_enrollments")
     .select(
-      "*, step_flows(id, status), friends(id, line_user_id, display_name, points, stage)"
+      "*, step_flows(id, status, account_id), friends(id, line_user_id, display_name, points, stage)"
     )
     .eq("status", "active")
     .lte("next_send_at", now);
@@ -22,6 +23,16 @@ export async function POST() {
 
   let sent = 0;
   let completed = 0;
+
+  // account_id ごとのトークンをキャッシュ
+  const accountCache = new Map<string, LineAccount | null>();
+  async function resolveFlowToken(accountId: string | null | undefined) {
+    if (!accountId) return resolveToken(null);
+    if (!accountCache.has(accountId)) {
+      accountCache.set(accountId, await getAccountById(supabase, accountId));
+    }
+    return resolveToken(accountCache.get(accountId) || null);
+  }
 
   for (const enrollment of enrollments || []) {
     try {
@@ -52,7 +63,10 @@ export async function POST() {
         const text = friend
           ? renderTemplate(currentMessage.message_text, friend)
           : currentMessage.message_text;
-        await pushMessage(lineUserId, text);
+        const token = await resolveFlowToken(
+          (enrollment.step_flows as { account_id?: string | null } | null)?.account_id
+        );
+        await pushMessage(lineUserId, text, token);
         sent++;
 
         await logMessage(supabase, enrollment.friend_id, {

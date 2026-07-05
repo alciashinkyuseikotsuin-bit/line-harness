@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 // ステップフロー一覧
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data: flows, error } = await supabase
+  let query = supabase
     .from("step_flows")
     .select("*, step_messages(id, message_text, delay_minutes, sort_order)")
     .order("created_at", { ascending: false });
+
+  if (accountId) {
+    query = query.eq("account_id", accountId);
+  }
+
+  const { data: flows, error } = await query;
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -57,6 +66,8 @@ export async function POST(request: NextRequest) {
   const matchMode: "any" | "all" = trigger_match_mode === "all" ? "all" : "any";
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
   const { data: flow, error } = await supabase
     .from("step_flows")
@@ -66,6 +77,7 @@ export async function POST(request: NextRequest) {
       trigger_tags: tagsArray,
       trigger_match_mode: matchMode,
       status: saveAsDraft ? "draft" : "active",
+      account_id: accountId ?? null,
     })
     .select()
     .single();

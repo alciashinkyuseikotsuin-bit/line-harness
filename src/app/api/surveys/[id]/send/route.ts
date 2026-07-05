@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { sendSurveyMessage } from "@/lib/line";
+import { getAccountById, resolveToken } from "@/lib/accounts";
 
 // アンケートをLINEで配信
 export async function POST(
@@ -56,11 +57,21 @@ export async function POST(
     );
   }
 
-  // 配信対象を取得
+  // アンケートの所属アカウントからトークンを解決
+  const account = survey.account_id
+    ? await getAccountById(supabase, survey.account_id)
+    : null;
+  const token = resolveToken(account);
+
+  // 配信対象を取得（アンケートと同じアカウントの友だちのみ）
   let friendsQuery = supabase
     .from("friends")
     .select("line_user_id, display_name")
     .eq("is_blocked", false);
+
+  if (survey.account_id) {
+    friendsQuery = friendsQuery.eq("account_id", survey.account_id);
+  }
 
   if (mode === "test") {
     // テスト配信: 「テスト配信」タグが付いた友だちのみ（堀優介のみ）
@@ -103,7 +114,8 @@ export async function POST(
           survey.id,
           firstQ.id,
           firstQ.question_text,
-          choices
+          choices,
+          token
         );
         sentCount++;
         sentTo.push(friend.display_name || friend.line_user_id);

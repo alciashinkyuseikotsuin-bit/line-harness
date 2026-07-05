@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -133,7 +134,7 @@ function SurveyCreateInner() {
   // 編集モード: 既存データを読み込む
   useEffect(() => {
     if (!editId) return;
-    fetch(`/api/surveys/${editId}`)
+    apiFetch(`/api/surveys/${editId}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.survey) {
@@ -416,7 +417,7 @@ function SurveyCreateInner() {
     try {
       const url = editId ? `/api/surveys/${editId}` : "/api/surveys";
       const method = editId ? "PATCH" : "POST";
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildPayload()),
@@ -447,7 +448,7 @@ function SurveyCreateInner() {
       // まず保存（編集モードならPATCH、新規ならPOST）
       const url = editId ? `/api/surveys/${editId}` : "/api/surveys";
       const method = editId ? "PATCH" : "POST";
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildPayload()),
@@ -464,7 +465,7 @@ function SurveyCreateInner() {
 
       if (surveyId) {
         // テストモードで送信（「テスト配信」タグの人だけ）
-        const sendRes = await fetch(`/api/surveys/${surveyId}/send`, {
+        const sendRes = await apiFetch(`/api/surveys/${surveyId}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mode: "test" }),
@@ -494,7 +495,7 @@ function SurveyCreateInner() {
 
     setSending(true);
     try {
-      const sendRes = await fetch(`/api/surveys/${savedSurveyId}/send`, {
+      const sendRes = await apiFetch(`/api/surveys/${savedSurveyId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "all" }),

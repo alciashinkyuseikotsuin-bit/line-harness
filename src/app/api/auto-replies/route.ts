@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 // キーワード自動応答 一覧取得
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("auto_replies")
     .select("*")
     .order("priority", { ascending: false })
     .order("created_at", { ascending: false });
+
+  if (accountId) {
+    query = query.eq("account_id", accountId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -47,6 +56,8 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
   const { data, error } = await supabase
     .from("auto_replies")
@@ -60,6 +71,7 @@ export async function POST(request: NextRequest) {
       once_per_friend: !!once_per_friend,
       active: active === undefined ? true : !!active,
       priority: Number.isFinite(priority) ? priority : 0,
+      account_id: accountId ?? null,
     })
     .select()
     .single();

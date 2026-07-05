@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import {
   Card,
   CardContent,
@@ -26,7 +27,7 @@ export function FriendsChart() {
   const [count, setCount] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch("/api/stats")
+    apiFetch("/api/stats")
       .then((r) => r.json())
       .then((d) => setCount(d.friendsCount || 0))
       .catch(console.error);

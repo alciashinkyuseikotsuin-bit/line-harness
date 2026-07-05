@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -69,7 +70,7 @@ export default function UsersPage() {
   const [allTags, setAllTags] = useState<string[]>([]);
 
   function loadAllTags() {
-    fetch("/api/tags")
+    apiFetch("/api/tags")
       .then((r) => r.json())
       .then((d) => setAllTags(d.tags || []))
       .catch(() => {});
@@ -78,7 +79,7 @@ export default function UsersPage() {
   function loadFriends() {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
-    fetch(`/api/friends?${params}`)
+    apiFetch(`/api/friends?${params}`)
       .then((r) => r.json())
       .then((d) => setFriends(d.friends || []))
       .catch(console.error)
@@ -88,7 +89,7 @@ export default function UsersPage() {
   useEffect(() => {
     loadFriends();
     loadAllTags();
-    fetch("/api/friends/sync", { method: "POST" }).catch(() => {});
+    apiFetch("/api/friends/sync", { method: "POST" }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -103,7 +104,7 @@ export default function UsersPage() {
   async function addTag(friendId: string, override?: string) {
     const tag = (override ?? tagInput[friendId])?.trim();
     if (!tag) return;
-    await fetch(`/api/friends/${friendId}/tags`, {
+    await apiFetch(`/api/friends/${friendId}/tags`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tag }),
@@ -115,7 +116,7 @@ export default function UsersPage() {
   }
 
   async function removeTag(friendId: string, tag: string) {
-    await fetch(`/api/friends/${friendId}/tags`, {
+    await apiFetch(`/api/friends/${friendId}/tags`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tag }),
@@ -133,7 +134,7 @@ export default function UsersPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/friends/import", {
+      const res = await apiFetch("/api/friends/import", {
         method: "POST",
         body: formData,
       });

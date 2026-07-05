@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 // アンケート一覧取得
-export async function GET() {
+export async function GET(request: NextRequest) {
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
-  const { data: surveys, error } = await supabase
+  let query = supabase
     .from("surveys")
     .select(
       `
@@ -25,6 +28,12 @@ export async function GET() {
     `
     )
     .order("created_at", { ascending: false });
+
+  if (accountId) {
+    query = query.eq("account_id", accountId);
+  }
+
+  const { data: surveys, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -65,6 +74,8 @@ export async function POST(request: NextRequest) {
   } = body;
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
 
   // 種別（診断 or 通常アンケート）。未指定時は従来通り 'survey'
   const normalizedSurveyType = surveyType === "diagnosis" ? "diagnosis" : "survey";
@@ -78,6 +89,7 @@ export async function POST(request: NextRequest) {
       completion_message: completionMessage || null,
       status: "draft",
       survey_type: normalizedSurveyType,
+      account_id: accountId ?? null,
     })
     .select()
     .single();

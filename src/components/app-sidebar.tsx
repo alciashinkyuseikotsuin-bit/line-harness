@@ -30,6 +30,7 @@ import {
   SidebarMenuItem,
   SidebarFooter,
 } from "@/components/ui/sidebar";
+import { AccountSwitcher } from "@/components/account-switcher";
 
 const navMain = [
   {
@@ -131,6 +132,7 @@ export function AppSidebar() {
             <div className="text-xs text-muted-foreground">管理画面</div>
           </div>
         </Link>
+        <AccountSwitcher />
       </SidebarHeader>
 
       <SidebarContent>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { draftMessage, isAiConfigured } from "@/lib/ai";
+import { getAccountFromRequest } from "@/lib/accounts";
 
 export const maxDuration = 300;
 
@@ -30,13 +31,29 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const account = await getAccountFromRequest(supabase, request);
+  const accountId = account?.id;
+
+  // lib/ai.ts の draftMessage 内部カウントはアカウント非対応（全アカウント横断）のため、
+  // アカウント指定時はここで正しいセグメント人数を計算し extraInstructions に補足として渡す
+  let extra = extraInstructions || undefined;
+  if (accountId && Array.isArray(targetTags) && targetTags.length > 0) {
+    const { count } = await supabase
+      .from("friends")
+      .select("*", { count: "exact", head: true })
+      .eq("is_blocked", false)
+      .eq("account_id", accountId)
+      .overlaps("tags", targetTags);
+    const note = `（このアカウントでの対象人数は ${count || 0} 人です）`;
+    extra = extra ? `${extra}\n${note}` : note;
+  }
 
   try {
     const draft = await draftMessage(supabase, {
       goal: goal.trim(),
       friendId: friendId || undefined,
       targetTags: Array.isArray(targetTags) ? targetTags : undefined,
-      extraInstructions: extraInstructions || undefined,
+      extraInstructions: extra,
     });
     return NextResponse.json({ draft });
   } catch (err) {

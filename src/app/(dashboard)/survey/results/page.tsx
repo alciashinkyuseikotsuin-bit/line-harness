@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -75,7 +76,7 @@ export default function SurveyResultsPage() {
     (async () => {
       setLoading(true);
       try {
-        const listRes = await fetch("/api/surveys");
+        const listRes = await apiFetch("/api/surveys");
         const listData = await listRes.json();
         const list = listData.surveys || [];
         setSurveyList(list);
@@ -83,7 +84,7 @@ export default function SurveyResultsPage() {
         // 各サーベイの詳細を並列取得
         const detailed = await Promise.all(
           list.map(async (sv: { id: string }) => {
-            const r = await fetch(`/api/surveys/${sv.id}/results`);
+            const r = await apiFetch(`/api/surveys/${sv.id}/results`);
             return r.json();
           })
         );
