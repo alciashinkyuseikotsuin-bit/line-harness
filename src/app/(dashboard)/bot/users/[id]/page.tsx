@@ -168,8 +168,9 @@ export default function FriendDetailPage() {
   const [tagInput, setTagInput] = useState("");
   const [showTagInput, setShowTagInput] = useState(false);
 
-  const [aiLoading, setAiLoading] = useState(false);
+  const [aiLoading, setAiLoading] = useState<"lite" | "ai" | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiConfirm, setAiConfirm] = useState(false);
 
   const [messageText, setMessageText] = useState("");
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
@@ -272,11 +273,22 @@ export default function FriendDetailPage() {
     }
   }
 
-  async function runAiAnalysis() {
-    setAiLoading(true);
+  async function runAnalysis(level: "lite" | "ai") {
+    // 有料のAI分析は誤タップ防止のため2度押しで実行
+    if (level === "ai" && !aiConfirm) {
+      setAiConfirm(true);
+      setTimeout(() => setAiConfirm(false), 4000);
+      return;
+    }
+    setAiConfirm(false);
+    setAiLoading(level);
     setAiError(null);
     try {
-      const res = await fetch(`/api/friends/${id}/analyze`, { method: "POST" });
+      const res = await fetch(`/api/friends/${id}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level }),
+      });
       const data = await res.json().catch(() => ({}));
       if (res.status === 501) {
         setAiError(
@@ -286,14 +298,14 @@ export default function FriendDetailPage() {
         return;
       }
       if (!res.ok) {
-        setAiError(data.error || "AI分析に失敗しました");
+        setAiError(data.error || "分析に失敗しました");
         return;
       }
       await loadFriend();
     } catch {
-      setAiError("AI分析に失敗しました（通信エラー）");
+      setAiError("分析に失敗しました（通信エラー）");
     } finally {
-      setAiLoading(false);
+      setAiLoading(null);
     }
   }
 
@@ -511,19 +523,41 @@ export default function FriendDetailPage() {
               </p>
             )}
             {aiError && <p className="text-xs text-red-600">{aiError}</p>}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={runAiAnalysis}
-              disabled={aiLoading}
-            >
-              {aiLoading ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4 mr-2" />
-              )}
-              {aiLoading ? "分析中...（数十秒かかります）" : "AI分析を実行"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => runAnalysis("lite")}
+                disabled={aiLoading !== null}
+              >
+                {aiLoading === "lite" ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 mr-2" />
+                )}
+                {aiLoading === "lite" ? "分析中..." : "ライト分析（無料・即時）"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => runAnalysis("ai")}
+                disabled={aiLoading !== null}
+                className={aiConfirm ? "border-amber-500 text-amber-600" : ""}
+              >
+                {aiLoading === "ai" ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 mr-2" />
+                )}
+                {aiLoading === "ai"
+                  ? "AI分析中...（数十秒かかります）"
+                  : aiConfirm
+                    ? "もう一度押すと実行（数円かかります）"
+                    : "AI分析（有料・数円）"}
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              ライト分析は行動データから自動生成（何回でも0円）。AI分析はClaudeによる本格的な人物像・文面案の生成（1回数円）で、ここぞという相手だけに使うのがおすすめです。
+            </p>
           </CardContent>
         </Card>
       </div>
