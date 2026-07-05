@@ -170,7 +170,7 @@ export default function SettingsPage() {
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-bold">設定</h1>
 
-      <Card>
+      <Card id="accounts">
         <CardHeader>
           <CardTitle className="text-base">LINEアカウント管理</CardTitle>
           <CardDescription>
