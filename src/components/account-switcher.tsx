@@ -12,7 +12,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 
 type Account = {
@@ -72,7 +71,14 @@ export function AccountSwitcher() {
         <Select value={selected} onValueChange={(v) => handleChange(v as string)}>
           <SelectTrigger className="w-full text-xs" title="クリックでアカウントを切替">
             <ArrowLeftRight className="h-3.5 w-3.5 text-[#06C755] shrink-0" />
-            <SelectValue placeholder="アカウントを選択" />
+            {/* SelectValue はIDをそのまま表示してしまうため、名前を自前で描画する */}
+            <span className="truncate">
+              {(() => {
+                const cur = accounts.find((a) => a.id === selected);
+                if (!cur) return "アカウントを選択";
+                return cur.is_default ? `${cur.name}（メイン）` : cur.name;
+              })()}
+            </span>
           </SelectTrigger>
           <SelectContent>
             {accounts.map((a) => (
