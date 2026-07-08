@@ -311,47 +311,45 @@ export async function POST(request: NextRequest) {
             const friend = await findOrCreateFriend(supabase, pbUserId, account);
             if (!friend) break;
 
-            // 回答を保存
-            await supabase.from("survey_responses").upsert(
-              {
-                survey_id: surveyId,
-                question_id: questionId,
-                choice_id: choiceId,
-                friend_id: friend.id,
-                responded_at: new Date().toISOString(),
-              },
-              { onConflict: "friend_id,question_id" }
-            );
-
-            const [choiceRes, currentFriendRes] = await Promise.all([
+            // Phase 1: 互いに依存しない読み書きを並列実行（回答保存・選択肢/友だち取得・ポイントルール取得）
+            const [, choiceRes, currentFriendRes, rules] = await Promise.all([
+              supabase.from("survey_responses").upsert(
+                {
+                  survey_id: surveyId,
+                  question_id: questionId,
+                  choice_id: choiceId,
+                  friend_id: friend.id,
+                  responded_at: new Date().toISOString(),
+                },
+                { onConflict: "friend_id,question_id" }
+              ),
               supabase
                 .from("survey_choices")
                 .select("tag, broadcast_message, choice_text")
                 .eq("id", choiceId)
                 .single(),
-              supabase
-                .from("friends")
-                .select("tags")
-                .eq("id", friend.id)
-                .single(),
+              supabase.from("friends").select("tags").eq("id", friend.id).single(),
+              getPointRules(supabase, accountId),
             ]);
 
             const choice = choiceRes.data;
             if (!choice) break;
 
-            // 回答ログ
-            await logEvent(supabase, friend.id, "survey_answer", {
-              survey_id: surveyId,
-              question_id: questionId,
-              choice_id: choiceId,
-              choice_text: choice.choice_text,
-            });
-            await logMessage(supabase, friend.id, {
-              direction: "in",
-              content: choice.choice_text,
-              source: "survey",
-              metadata: { survey_id: surveyId, question_id: questionId },
-            });
+            // 回答ログ（完了を待たずバックグラウンドで進める）
+            const logTasks: Promise<unknown>[] = [
+              logEvent(supabase, friend.id, "survey_answer", {
+                survey_id: surveyId,
+                question_id: questionId,
+                choice_id: choiceId,
+                choice_text: choice.choice_text,
+              }),
+              logMessage(supabase, friend.id, {
+                direction: "in",
+                content: choice.choice_text,
+                source: "survey",
+                metadata: { survey_id: surveyId, question_id: questionId },
+              }),
+            ];
 
             // タグ計算
             const currentTags: string[] = currentFriendRes.data?.tags || [];
@@ -383,7 +381,7 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // 友だちレコード更新
+            // 友だちレコード更新（内容を組み立てるのみ。書き込みはPhase 2で並列実行）
             const friendUpdate: Record<string, unknown> = {
               last_active_at: new Date().toISOString(),
             };
@@ -399,36 +397,41 @@ export async function POST(request: NextRequest) {
                 question_id: questionId,
               };
             }
-            await supabase.from("friends").update(friendUpdate).eq("id", friend.id);
 
-            // === 送信メッセージを組み立てて 1 回の pushMessages で送る ===
+            // === 送信メッセージを組み立て ===
             const messagesToSend: unknown[] = [];
             if (choice.broadcast_message) {
               messagesToSend.push({ type: "text", text: choice.broadcast_message });
             }
             messagesToSend.push(...nextStep.messages);
 
-            if (messagesToSend.length > 0) {
-              try {
-                await pushMessages(pbUserId, messagesToSend, token);
-                await logMessage(supabase, friend.id, {
-                  direction: "out",
-                  content: messagesToSend
-                    .map((m) => {
-                      const msg = m as { type: string; text?: string; altText?: string };
-                      return msg.type === "text" ? msg.text : msg.altText || `[${msg.type}]`;
-                    })
-                    .join("\n"),
-                  source: nextStep.completed ? "diagnosis" : "survey",
-                  metadata: { survey_id: surveyId },
-                });
-              } catch (err) {
-                console.error("push 失敗:", err);
-              }
-            }
+            const pushTask =
+              messagesToSend.length > 0
+                ? pushMessages(pbUserId, messagesToSend, token)
+                    .then(() =>
+                      logMessage(supabase, friend.id, {
+                        direction: "out",
+                        content: messagesToSend
+                          .map((m) => {
+                            const msg = m as {
+                              type: string;
+                              text?: string;
+                              altText?: string;
+                            };
+                            return msg.type === "text"
+                              ? msg.text
+                              : msg.altText || `[${msg.type}]`;
+                          })
+                          .join("\n"),
+                        source: nextStep.completed ? "diagnosis" : "survey",
+                        metadata: { survey_id: surveyId },
+                      })
+                    )
+                    .catch((err) => console.error("push 失敗:", err))
+                : Promise.resolve();
 
-            // バックグラウンド処理: ステップフロー登録・ポイント付与・スコア再計算
-            const rules = await getPointRules(supabase, accountId);
+            // バックグラウンド処理: ステップフロー登録・ポイント付与
+            // enrollMatchingStepFlows は updatedTags を直接受け取るため friends.update の完了を待つ必要がない
             const bgTasks: Promise<unknown>[] = [
               enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId),
             ];
@@ -454,7 +457,14 @@ export async function POST(request: NextRequest) {
                 )
               );
             }
-            await Promise.allSettled(bgTasks);
+
+            // Phase 2: 友だち更新・メッセージ送信・ステップ登録/ポイント付与を並列実行
+            await Promise.allSettled([
+              ...logTasks,
+              supabase.from("friends").update(friendUpdate).eq("id", friend.id),
+              pushTask,
+              ...bgTasks,
+            ]);
             await recalcFriendScore(supabase, friend.id);
           }
           break;

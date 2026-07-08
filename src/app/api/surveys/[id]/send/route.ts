@@ -66,7 +66,7 @@ export async function POST(
   // 配信対象を取得（アンケートと同じアカウントの友だちのみ）
   let friendsQuery = supabase
     .from("friends")
-    .select("line_user_id, display_name")
+    .select("id, line_user_id, display_name")
     .eq("is_blocked", false);
 
   if (survey.account_id) {
@@ -96,6 +96,20 @@ export async function POST(
   const questions = (survey.survey_questions || []).sort(
     (a: any, b: any) => a.sort_order - b.sort_order
   );
+
+  // テスト配信は何度でも可能な設計のため、過去の回答が残っていると
+  // 1問目に答えた瞬間に「全問回答済み」と誤認して即完了してしまう。
+  // 再送のたびに対象者の過去回答をリセットし、毎回フルに1問目からやり直せるようにする。
+  if (mode === "test") {
+    await supabase
+      .from("survey_responses")
+      .delete()
+      .eq("survey_id", id)
+      .in(
+        "friend_id",
+        friends.map((f: { id: string }) => f.id)
+      );
+  }
 
   let sentCount = 0;
   const sentTo: string[] = [];
