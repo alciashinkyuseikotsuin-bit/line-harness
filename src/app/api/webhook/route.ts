@@ -198,31 +198,53 @@ async function buildNextStepOrCompletion(
       buildSurveyFlexMessage(surveyId, nextQ.id, nextQ.question_text, sortedChoices)
     );
   } else {
-    completed = true;
-    const completionMessage = surveyRes.data?.completion_message;
-    if (completionMessage && completionMessage.trim()) {
-      messages.push({ type: "text", text: completionMessage });
-    }
+    // 完了済みかどうかを確認（トーク履歴に残った古いボタンの再タップによる
+    // 完了メッセージ・ポイントの重複付与を防止する）
+    const { data: existingCompletion } = await supabase
+      .from("friend_events")
+      .select("id")
+      .eq("friend_id", friendId)
+      .eq("event_type", "survey_fully_completed")
+      .contains("metadata", { survey_id: surveyId })
+      .limit(1)
+      .maybeSingle();
 
-    // 診断タイプなら結果を計算して送る
-    if (surveyRes.data?.survey_type === "diagnosis") {
-      try {
-        const outcome = await computeDiagnosisResult(supabase, surveyId, friendId);
-        if (outcome) {
-          messages.push({
-            type: "text",
-            text: `🎯 診断結果：${outcome.title}\n\n${outcome.resultMessage}`,
-          });
-          addTag = outcome.addTag;
-          await logEvent(supabase, friendId, "diagnosis_complete", {
-            survey_id: surveyId,
-            type_key: outcome.typeKey,
-            scores: outcome.scores,
-          });
-        }
-      } catch (diagErr) {
-        console.error("診断結果計算エラー:", diagErr);
+    if (existingCompletion) {
+      messages.push({
+        type: "text",
+        text: "このアンケートは受付済みです。プレゼントは既にお届けしています🙏",
+      });
+    } else {
+      completed = true;
+      const completionMessage = surveyRes.data?.completion_message;
+      if (completionMessage && completionMessage.trim()) {
+        messages.push({ type: "text", text: completionMessage });
       }
+
+      // 診断タイプなら結果を計算して送る
+      if (surveyRes.data?.survey_type === "diagnosis") {
+        try {
+          const outcome = await computeDiagnosisResult(supabase, surveyId, friendId);
+          if (outcome) {
+            messages.push({
+              type: "text",
+              text: `🎯 診断結果：${outcome.title}\n\n${outcome.resultMessage}`,
+            });
+            addTag = outcome.addTag;
+            await logEvent(supabase, friendId, "diagnosis_complete", {
+              survey_id: surveyId,
+              type_key: outcome.typeKey,
+              scores: outcome.scores,
+            });
+          }
+        } catch (diagErr) {
+          console.error("診断結果計算エラー:", diagErr);
+        }
+      }
+
+      await logEvent(supabase, friendId, "survey_fully_completed", {
+        survey_id: surveyId,
+      });
     }
   }
 
@@ -292,7 +314,7 @@ export async function POST(request: NextRequest) {
                     survey_choices ( id, choice_text, sort_order )
                   )`
                 )
-                .neq("status", "archived")
+                .eq("status", "active")
                 .order("created_at", { ascending: false })
                 .limit(1);
               if (accountId) {
@@ -359,6 +381,16 @@ export async function POST(request: NextRequest) {
           if (surveyId && questionId && choiceId && pbUserId) {
             const friend = await findOrCreateFriend(supabase, pbUserId, account);
             if (!friend) break;
+
+            // トーク履歴に残った古いボタンを再タップした場合、回答ポイントを
+            // 何度も稼げてしまわないように、上書き（upsert）する前に既存回答の有無を確認する
+            const { data: existingAnswer } = await supabase
+              .from("survey_responses")
+              .select("question_id")
+              .eq("friend_id", friend.id)
+              .eq("question_id", questionId)
+              .maybeSingle();
+            const isReAnswer = !!existingAnswer;
 
             // Phase 1: 互いに依存しない読み書きを並列実行（回答保存・選択肢/友だち取得・ポイントルール取得）
             const [, choiceRes, currentFriendRes, rules] = await Promise.all([
@@ -484,7 +516,7 @@ export async function POST(request: NextRequest) {
             const bgTasks: Promise<unknown>[] = [
               enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId),
             ];
-            if (rules.survey_answer > 0) {
+            if (!isReAnswer && rules.survey_answer > 0) {
               bgTasks.push(
                 awardPoints(
                   supabase,
