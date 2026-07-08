@@ -281,6 +281,55 @@ export async function POST(request: NextRequest) {
             .single();
           if (followed) {
             await logEvent(supabase, followed.id, "follow", {});
+
+            // ウェルカムアンケートを自動送信（最新の非アーカイブアンケート）
+            try {
+              let surveyQuery = supabase
+                .from("surveys")
+                .select(
+                  `id, survey_questions (
+                    id, question_text, sort_order,
+                    survey_choices ( id, choice_text, sort_order )
+                  )`
+                )
+                .neq("status", "archived")
+                .order("created_at", { ascending: false })
+                .limit(1);
+              if (accountId) {
+                surveyQuery = surveyQuery.eq("account_id", accountId);
+              }
+              const { data: welcomeSurvey } = await (surveyQuery as any).maybeSingle();
+
+              if (welcomeSurvey) {
+                const sortedQuestions = (
+                  welcomeSurvey.survey_questions || []
+                ).sort((a: any, b: any) => a.sort_order - b.sort_order);
+                const firstQ = sortedQuestions[0];
+                if (firstQ) {
+                  const choices = (firstQ.survey_choices || [])
+                    .sort((a: any, b: any) => a.sort_order - b.sort_order)
+                    .map((c: any) => ({ id: c.id, text: c.choice_text }));
+                  await pushMessages(
+                    event.source.userId,
+                    [
+                      {
+                        type: "text",
+                        text: "友達追加ありがとうございます！\n\nあなたに最適な情報をお届けするために、1分でできるアンケートにご協力ください📝",
+                      },
+                      buildSurveyFlexMessage(
+                        welcomeSurvey.id,
+                        firstQ.id,
+                        firstQ.question_text,
+                        choices
+                      ),
+                    ],
+                    token
+                  );
+                }
+              }
+            } catch (surveyErr) {
+              console.error("ウェルカムアンケート送信エラー:", surveyErr);
+            }
           }
           break;
         }

@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/broadcast/process",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/step-flows/process",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
