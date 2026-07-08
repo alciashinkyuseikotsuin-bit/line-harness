@@ -1,0 +1,23 @@
+name: Step flows / broadcast dispatch
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger step-flows processing
+        run: |
+          curl -sf -X POST "https://line-harness-mu.vercel.app/api/step-flows/process" \
+            -H "Content-Type: application/json" \
+            -o step-flows-response.json
+          cat step-flows-response.json
+      - name: Trigger scheduled broadcast processing
+        run: |
+          curl -sf -X POST "https://line-harness-mu.vercel.app/api/broadcast/process" \
+            -H "Content-Type: application/json" \
+            -o broadcast-response.json
+          cat broadcast-response.json
