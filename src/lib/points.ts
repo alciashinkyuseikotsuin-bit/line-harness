@@ -60,24 +60,40 @@ export async function awardPoints(
 
   try {
     // 現在ポイント取得 → 加算（所属アカウントも同時に取得）
-    const { data: current } = await supabase
-      .from("friends")
-      .select("points, tags, account_id")
-      .eq("id", friend.id)
-      .single();
+    // 同じ友だちに対して複数のポイント付与が同時に走ると（例: アンケート最終問の
+    // 「回答」と「完了」ボーナスが同時に加算される場合）、読み取り→計算→書き込みの
+    // 間に他方の更新が割り込み、片方の加算が消えてしまう（lost update）。
+    // 楽観的ロック（更新時に読み取り時点のpointsと一致するかを条件に含め、
+    // 一致しなければ再読込して再試行）でこれを防ぐ。
+    let current: { points: number | null; tags: string[] | null; account_id: string | null } | null = null;
+    let newTotal = 0;
+    let updateSucceeded = false;
+
+    for (let attempt = 0; attempt < 5 && !updateSucceeded; attempt++) {
+      const { data } = await supabase
+        .from("friends")
+        .select("points, tags, account_id")
+        .eq("id", friend.id)
+        .single();
+      current = data;
+      const before = current?.points || 0;
+      newTotal = before + amount;
+
+      const { data: updated } = await supabase
+        .from("friends")
+        .update({ points: newTotal })
+        .eq("id", friend.id)
+        .eq("points", before)
+        .select("id");
+
+      updateSucceeded = !!updated && updated.length > 0;
+    }
 
     // 所属アカウントのトークンで送信・特典もアカウント内のものだけを対象にする
     const account = current?.account_id
       ? await getAccountById(supabase, current.account_id)
       : await getDefaultAccount(supabase);
     const token = resolveToken(account);
-    const before = current?.points || 0;
-    const newTotal = before + amount;
-
-    await supabase
-      .from("friends")
-      .update({ points: newTotal })
-      .eq("id", friend.id);
 
     await supabase.from("point_transactions").insert({
       friend_id: friend.id,
