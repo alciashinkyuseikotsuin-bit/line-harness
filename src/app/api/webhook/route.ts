@@ -147,7 +147,8 @@ async function sendActiveSurveyFirstQuestion(
   lineUserId: string,
   token: string | undefined,
   accountId: string | undefined,
-  greetingText: string
+  greetingText: string,
+  debugFriendId?: string
 ): Promise<boolean> {
   try {
     let surveyQuery = supabase
@@ -164,7 +165,14 @@ async function sendActiveSurveyFirstQuestion(
     if (accountId) {
       surveyQuery = surveyQuery.eq("account_id", accountId);
     }
-    const { data: survey } = await (surveyQuery as any).maybeSingle();
+    const { data: survey, error: surveyErr } = await (surveyQuery as any).maybeSingle();
+    if (debugFriendId) {
+      await logEvent(supabase, debugFriendId, "debug_survey_lookup", {
+        found: !!survey,
+        error: surveyErr ? String(surveyErr.message || surveyErr) : null,
+        accountId,
+      });
+    }
     if (!survey) return false;
 
     const sortedQuestions = (survey.survey_questions || []).sort(
@@ -185,9 +193,17 @@ async function sendActiveSurveyFirstQuestion(
       ],
       token
     );
+    if (debugFriendId) {
+      await logEvent(supabase, debugFriendId, "debug_survey_sent", {});
+    }
     return true;
   } catch (err) {
     console.error("アンケート送信エラー:", err);
+    if (debugFriendId) {
+      await logEvent(supabase, debugFriendId, "debug_survey_error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     return false;
   }
 }
@@ -714,7 +730,8 @@ export async function POST(request: NextRequest) {
                 userId,
                 token,
                 accountId,
-                "ご協力ありがとうございます！早速いきましょう📝"
+                "ご協力ありがとうございます！早速いきましょう📝",
+                friend.id
               );
               if (!sent) {
                 const replyText = "現在お送りできるアンケートがありません。もう少しお待ちください🙏";
