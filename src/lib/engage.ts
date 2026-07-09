@@ -124,11 +124,12 @@ export async function drawOmikuji(
 }
 
 /** 組み込みコマンド判定 */
-export type BuiltinCommand = "omikuji" | "points" | null;
+export type BuiltinCommand = "omikuji" | "points" | "survey" | null;
 
 export function detectBuiltinCommand(text: string): BuiltinCommand {
   const t = text.trim();
   if (/^(おみくじ|運勢|今日の運勢)$/.test(t)) return "omikuji";
   if (/^(ポイント|マイポイント|ポイント確認|pt)$/i.test(t)) return "points";
+  if (/^(アンケート|診断)$/.test(t)) return "survey";
   return null;
 }

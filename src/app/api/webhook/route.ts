@@ -139,6 +139,59 @@ async function findOrCreateFriend(
   }
 }
 
+// 有効なアンケート（最新のstatus=active）の1問目を、挨拶文つきで送信する。
+// 友だち追加時のウェルカムアンケートと、既存の友だちが「アンケート」キーワードで
+// 呼び出す場合の両方から使う共通処理。
+async function sendActiveSurveyFirstQuestion(
+  supabase: SupabaseClient,
+  lineUserId: string,
+  token: string | undefined,
+  accountId: string | undefined,
+  greetingText: string
+): Promise<boolean> {
+  try {
+    let surveyQuery = supabase
+      .from("surveys")
+      .select(
+        `id, survey_questions (
+          id, question_text, sort_order,
+          survey_choices ( id, choice_text, sort_order )
+        )`
+      )
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (accountId) {
+      surveyQuery = surveyQuery.eq("account_id", accountId);
+    }
+    const { data: survey } = await (surveyQuery as any).maybeSingle();
+    if (!survey) return false;
+
+    const sortedQuestions = (survey.survey_questions || []).sort(
+      (a: any, b: any) => a.sort_order - b.sort_order
+    );
+    const firstQ = sortedQuestions[0];
+    if (!firstQ) return false;
+
+    const choices = (firstQ.survey_choices || [])
+      .sort((a: any, b: any) => a.sort_order - b.sort_order)
+      .map((c: any) => ({ id: c.id, text: c.choice_text }));
+
+    await pushMessages(
+      lineUserId,
+      [
+        { type: "text", text: greetingText },
+        buildSurveyFlexMessage(survey.id, firstQ.id, firstQ.question_text, choices),
+      ],
+      token
+    );
+    return true;
+  } catch (err) {
+    console.error("アンケート送信エラー:", err);
+    return false;
+  }
+}
+
 // アンケートの次質問 or 完了処理（診断結果・完了メッセージ）を組み立てる
 async function buildNextStepOrCompletion(
   supabase: SupabaseClient,
@@ -304,54 +357,14 @@ export async function POST(request: NextRequest) {
           if (followed) {
             await logEvent(supabase, followed.id, "follow", {});
 
-            // ウェルカムアンケートを自動送信（最新の非アーカイブアンケート）
-            try {
-              let surveyQuery = supabase
-                .from("surveys")
-                .select(
-                  `id, survey_questions (
-                    id, question_text, sort_order,
-                    survey_choices ( id, choice_text, sort_order )
-                  )`
-                )
-                .eq("status", "active")
-                .order("created_at", { ascending: false })
-                .limit(1);
-              if (accountId) {
-                surveyQuery = surveyQuery.eq("account_id", accountId);
-              }
-              const { data: welcomeSurvey } = await (surveyQuery as any).maybeSingle();
-
-              if (welcomeSurvey) {
-                const sortedQuestions = (
-                  welcomeSurvey.survey_questions || []
-                ).sort((a: any, b: any) => a.sort_order - b.sort_order);
-                const firstQ = sortedQuestions[0];
-                if (firstQ) {
-                  const choices = (firstQ.survey_choices || [])
-                    .sort((a: any, b: any) => a.sort_order - b.sort_order)
-                    .map((c: any) => ({ id: c.id, text: c.choice_text }));
-                  await pushMessages(
-                    event.source.userId,
-                    [
-                      {
-                        type: "text",
-                        text: "友達追加ありがとうございます！\n\nあなたに最適な情報をお届けするために、1分でできるアンケートにご協力ください📝",
-                      },
-                      buildSurveyFlexMessage(
-                        welcomeSurvey.id,
-                        firstQ.id,
-                        firstQ.question_text,
-                        choices
-                      ),
-                    ],
-                    token
-                  );
-                }
-              }
-            } catch (surveyErr) {
-              console.error("ウェルカムアンケート送信エラー:", surveyErr);
-            }
+            // ウェルカムアンケートを自動送信（最新のstatus=active）
+            await sendActiveSurveyFirstQuestion(
+              supabase,
+              event.source.userId,
+              token,
+              accountId,
+              "友達追加ありがとうございます！\n\nあなたに最適な情報をお届けするために、1分でできるアンケートにご協力ください📝"
+            );
           }
           break;
         }
@@ -691,6 +704,27 @@ export async function POST(request: NextRequest) {
                 content: replyText,
                 source: "omikuji",
               });
+              await recalcFriendScore(supabase, friend.id);
+              break;
+            }
+
+            if (builtin === "survey") {
+              const sent = await sendActiveSurveyFirstQuestion(
+                supabase,
+                userId,
+                token,
+                accountId,
+                "ご協力ありがとうございます！早速いきましょう📝"
+              );
+              if (!sent) {
+                const replyText = "現在お送りできるアンケートがありません。もう少しお待ちください🙏";
+                await pushMessage(userId, replyText, token);
+                await logMessage(supabase, friend.id, {
+                  direction: "out",
+                  content: replyText,
+                  source: "survey",
+                });
+              }
               await recalcFriendScore(supabase, friend.id);
               break;
             }
