@@ -1,4 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { pushMessage } from "@/lib/line";
+import { logMessage } from "@/lib/logging";
+import { renderTemplate, type FriendForPersonalize } from "@/lib/personalize";
+import { getAccountById, resolveToken, type LineAccount } from "@/lib/accounts";
 
 type StepFlowRow = {
   id: string;
@@ -17,6 +21,9 @@ type StepFlowRow = {
  *   - effectiveTriggers が空のフローはマッチしない
  *
  * 既に enroll 済みの場合は upsert の onConflict("flow_id,friend_id") で無視される。
+ *
+ * 1通目（delay_minutes=0など、今すぐ送るべきもの）は、外部cronの巡回を待たず
+ * この場で同期的に送信する。日をまたぐ2通目以降だけをcronの巡回に任せる。
  */
 export async function enrollMatchingStepFlows(
   supabase: SupabaseClient,
@@ -51,6 +58,7 @@ export async function enrollMatchingStepFlows(
   if (!flows || flows.length === 0) return;
 
   const tagSet = new Set(friendTags);
+  const immediateEnrollmentIds: string[] = [];
 
   for (const flow of flows as StepFlowRow[]) {
     const triggers =
@@ -80,20 +88,126 @@ export async function enrollMatchingStepFlows(
       .single();
 
     const nextSendAt = new Date();
-    if (firstStep) {
-      nextSendAt.setMinutes(nextSendAt.getMinutes() + firstStep.delay_minutes);
-    }
+    const delayMinutes = firstStep?.delay_minutes || 0;
+    nextSendAt.setMinutes(nextSendAt.getMinutes() + delayMinutes);
 
-    await supabase.from("step_enrollments").upsert(
-      {
-        flow_id: flow.id,
-        friend_id: friendId,
-        current_step: 0,
-        status: "active",
-        enrolled_at: new Date().toISOString(),
-        next_send_at: nextSendAt.toISOString(),
-      },
-      { onConflict: "flow_id,friend_id" }
-    );
+    const { data: enrollment } = await supabase
+      .from("step_enrollments")
+      .upsert(
+        {
+          flow_id: flow.id,
+          friend_id: friendId,
+          current_step: 0,
+          status: "active",
+          enrolled_at: new Date().toISOString(),
+          next_send_at: nextSendAt.toISOString(),
+        },
+        { onConflict: "flow_id,friend_id", ignoreDuplicates: false }
+      )
+      .select("id, status")
+      .single();
+
+    // 既存の enrollment を再度なぞっただけ（既に completed 済み等）の場合は
+    // 二重送信を避けるため即時送信の対象にしない。今回新規/active化したものだけを送る。
+    if (enrollment && delayMinutes <= 0 && enrollment.status === "active") {
+      immediateEnrollmentIds.push(enrollment.id);
+    }
   }
+
+  // 「今すぐ送るべき」1通目は、cronの巡回を待たずこの場で送信する
+  for (const enrollmentId of immediateEnrollmentIds) {
+    try {
+      await processDueEnrollmentById(supabase, enrollmentId);
+    } catch (err) {
+      console.error("即時ステップ配信エラー:", err);
+      // ここで失敗しても enrollment 自体は active のまま残るので、
+      // 次回のcron巡回で拾われて再送される（next_send_at が過去のまま）。
+    }
+  }
+}
+
+/**
+ * 1件の step_enrollment を処理する（対象メッセージを送信し、次ステップへ進める/完了させる）。
+ * cronによる巡回処理（/api/step-flows/process）と、enrollMatchingStepFlows からの
+ * 即時送信の両方から呼ばれる共通ロジック。
+ */
+export async function processDueEnrollmentById(
+  supabase: SupabaseClient,
+  enrollmentId: string,
+  accountCache?: Map<string, LineAccount | null>
+): Promise<{ sent: boolean; completed: boolean }> {
+  const cache = accountCache || new Map<string, LineAccount | null>();
+
+  const { data: enrollment } = await supabase
+    .from("step_enrollments")
+    .select(
+      "*, step_flows(id, status, account_id), friends(id, line_user_id, display_name, points, stage)"
+    )
+    .eq("id", enrollmentId)
+    .eq("status", "active")
+    .single();
+
+  if (!enrollment) return { sent: false, completed: false };
+  if (enrollment.step_flows?.status !== "active") return { sent: false, completed: false };
+
+  const { data: messages } = await supabase
+    .from("step_messages")
+    .select("*")
+    .eq("flow_id", enrollment.flow_id)
+    .order("sort_order", { ascending: true });
+
+  if (!messages || enrollment.current_step >= messages.length) {
+    await supabase
+      .from("step_enrollments")
+      .update({ status: "completed" })
+      .eq("id", enrollment.id);
+    return { sent: false, completed: true };
+  }
+
+  const currentMessage = messages[enrollment.current_step];
+  const friend = enrollment.friends as FriendForPersonalize | null;
+  const lineUserId = friend?.line_user_id;
+
+  if (!lineUserId || !currentMessage) return { sent: false, completed: false };
+
+  const accountId = (enrollment.step_flows as { account_id?: string | null } | null)
+    ?.account_id;
+  if (accountId && !cache.has(accountId)) {
+    cache.set(accountId, await getAccountById(supabase, accountId));
+  }
+  const token = resolveToken(accountId ? cache.get(accountId) || null : null);
+
+  const text = friend ? renderTemplate(currentMessage.message_text, friend) : currentMessage.message_text;
+  await pushMessage(lineUserId, text, token);
+
+  await logMessage(supabase, enrollment.friend_id, {
+    direction: "out",
+    content: text,
+    source: "step",
+    metadata: { flow_id: enrollment.flow_id, step: enrollment.current_step },
+  });
+
+  const nextStep = enrollment.current_step + 1;
+
+  if (nextStep >= messages.length) {
+    await supabase
+      .from("step_enrollments")
+      .update({ current_step: nextStep, status: "completed" })
+      .eq("id", enrollment.id);
+    return { sent: true, completed: true };
+  }
+
+  const nextMessage = messages[nextStep];
+  const nextSendAt = new Date();
+  nextSendAt.setMinutes(nextSendAt.getMinutes() + nextMessage.delay_minutes);
+
+  await supabase
+    .from("step_enrollments")
+    .update({
+      current_step: nextStep,
+      next_send_at: nextSendAt.toISOString(),
+    })
+    .eq("id", enrollment.id);
+
+  return { sent: true, completed: false };
 }
