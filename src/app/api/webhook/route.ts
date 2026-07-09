@@ -144,11 +144,11 @@ async function findOrCreateFriend(
 // 呼び出す場合の両方から使う共通処理。
 async function sendActiveSurveyFirstQuestion(
   supabase: SupabaseClient,
+  friendId: string,
   lineUserId: string,
   token: string | undefined,
   accountId: string | undefined,
-  greetingText: string,
-  debugFriendId?: string
+  greetingText: string
 ): Promise<boolean> {
   try {
     let surveyQuery = supabase
@@ -165,14 +165,7 @@ async function sendActiveSurveyFirstQuestion(
     if (accountId) {
       surveyQuery = surveyQuery.eq("account_id", accountId);
     }
-    const { data: survey, error: surveyErr } = await (surveyQuery as any).maybeSingle();
-    if (debugFriendId) {
-      await logEvent(supabase, debugFriendId, "debug_survey_lookup", {
-        found: !!survey,
-        error: surveyErr ? String(surveyErr.message || surveyErr) : null,
-        accountId,
-      });
-    }
+    const { data: survey } = await (surveyQuery as any).maybeSingle();
     if (!survey) return false;
 
     const sortedQuestions = (survey.survey_questions || []).sort(
@@ -193,17 +186,15 @@ async function sendActiveSurveyFirstQuestion(
       ],
       token
     );
-    if (debugFriendId) {
-      await logEvent(supabase, debugFriendId, "debug_survey_sent", {});
-    }
+    await logMessage(supabase, friendId, {
+      direction: "out",
+      content: `${greetingText}\n\nアンケート: ${firstQ.question_text}`,
+      source: "survey",
+      metadata: { survey_id: survey.id },
+    });
     return true;
   } catch (err) {
     console.error("アンケート送信エラー:", err);
-    if (debugFriendId) {
-      await logEvent(supabase, debugFriendId, "debug_survey_error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
     return false;
   }
 }
@@ -376,6 +367,7 @@ export async function POST(request: NextRequest) {
             // ウェルカムアンケートを自動送信（最新のstatus=active）
             await sendActiveSurveyFirstQuestion(
               supabase,
+              followed.id,
               event.source.userId,
               token,
               accountId,
@@ -727,11 +719,11 @@ export async function POST(request: NextRequest) {
             if (builtin === "survey") {
               const sent = await sendActiveSurveyFirstQuestion(
                 supabase,
+                friend.id,
                 userId,
                 token,
                 accountId,
-                "ご協力ありがとうございます！早速いきましょう📝",
-                friend.id
+                "ご協力ありがとうございます！早速いきましょう📝"
               );
               if (!sent) {
                 const replyText = "現在お送りできるアンケートがありません。もう少しお待ちください🙏";
