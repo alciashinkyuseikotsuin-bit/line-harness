@@ -716,14 +716,54 @@ export async function POST(request: NextRequest) {
               break;
             }
 
-            if (builtin === "survey") {
+            if (builtin === "survey" || builtin === "resurvey") {
+              // 「アンケート」: 回答済みの人には再送せず、その旨を案内する
+              // （サイトの1分問診ボタン等から何度でも呼ばれるため、二重回答を防ぐ）
+              if (builtin === "survey") {
+                const { data: doneEvent } = await supabase
+                  .from("friend_events")
+                  .select("id")
+                  .eq("friend_id", friend.id)
+                  .eq("event_type", "survey_fully_completed")
+                  .limit(1)
+                  .maybeSingle();
+                if (doneEvent) {
+                  const replyText =
+                    "アンケートにはすでにご回答いただいています🙏\nあなたに合わせたプレゼントもお届け済みです。\n\n状況が変わったのでもう一度回答し直したい場合は、「再診断」と送ってください。\n\n資料室はこちら📚\nhttps://line-homepage.vercel.app/library";
+                  await pushMessage(userId, replyText, token);
+                  await logMessage(supabase, friend.id, {
+                    direction: "out",
+                    content: replyText,
+                    source: "survey",
+                  });
+                  await recalcFriendScore(supabase, friend.id);
+                  break;
+                }
+              }
+
+              // 「再診断」: 過去の回答と完了マーカーをリセットしてから最初の質問を送る
+              // （リセットしないと最終問で「受付済み」ガードに当たり完了メッセージが出ない）
+              if (builtin === "resurvey") {
+                await supabase
+                  .from("survey_responses")
+                  .delete()
+                  .eq("friend_id", friend.id);
+                await supabase
+                  .from("friend_events")
+                  .delete()
+                  .eq("friend_id", friend.id)
+                  .eq("event_type", "survey_fully_completed");
+              }
+
               const sent = await sendActiveSurveyFirstQuestion(
                 supabase,
                 friend.id,
                 userId,
                 token,
                 accountId,
-                "ご協力ありがとうございます！早速いきましょう📝"
+                builtin === "resurvey"
+                  ? "再診断ですね！最新の状況で答えてください📝"
+                  : "ご協力ありがとうございます！早速いきましょう📝"
               );
               if (!sent) {
                 const replyText = "現在お送りできるアンケートがありません。もう少しお待ちください🙏";
