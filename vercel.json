@@ -1,8 +1,6 @@
 {
   "crons": [
-    { "path": "/api/broadcast/process", "schedule": "0 1 * * *" },
-    { "path": "/api/broadcast/process", "schedule": "0 6 * * *" },
-    { "path": "/api/broadcast/process", "schedule": "0 11 * * *" },
+    { "path": "/api/broadcast/process", "schedule": "*/5 * * * *" },
     { "path": "/api/step-flows/process", "schedule": "0 1 * * *" },
     { "path": "/api/step-flows/process", "schedule": "0 6 * * *" },
     { "path": "/api/step-flows/process", "schedule": "0 11 * * *" },
