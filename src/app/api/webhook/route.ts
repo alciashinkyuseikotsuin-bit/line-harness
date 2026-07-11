@@ -804,6 +804,8 @@ export async function POST(request: NextRequest) {
               if (nextReward) {
                 replyText += `\n\n次の特典「${nextReward.title}」まであと ${nextReward.threshold - pts}pt！`;
               }
+              replyText +=
+                "\n\n【貯め方】\n・毎日「おみくじ」と送る → 2pt\n・1日1回メッセージを送る → 1pt\n・配信のリンクを見る → 3pt\n\n貯まったポイントは、資料室の🔒特典（勉強会アーカイブ等）と交換できます📚\nhttps://line-homepage.vercel.app/mypage";
               await pushMessage(userId, replyText, token);
               await logMessage(supabase, friend.id, {
                 direction: "out",
