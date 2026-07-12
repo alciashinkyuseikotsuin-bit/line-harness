@@ -729,7 +729,7 @@ export async function POST(request: NextRequest) {
                   .maybeSingle();
                 if (doneEvent) {
                   const replyText =
-                    "アンケートにはすでにご回答いただいています🙏\nあなたに合わせたプレゼントもお届け済みです。\n\n状況が変わったのでもう一度回答し直したい場合は、「再診断」と送ってください。\n\n資料室はこちら📚\nhttps://line-homepage.vercel.app/library";
+                    "アンケートにはすでにご回答いただいています🙏\nあなたに合わせたプレゼントもお届け済みです。\n\n状況が変わったのでもう一度回答し直したい場合は、「再診断」と送ってください。\n\n資料室はこちら📚\nhttps://liff.line.me/2008962368-gb4854LN/library";
                   await pushMessage(userId, replyText, token);
                   await logMessage(supabase, friend.id, {
                     direction: "out",
@@ -805,7 +805,7 @@ export async function POST(request: NextRequest) {
                 replyText += `\n\n次の特典「${nextReward.title}」まであと ${nextReward.threshold - pts}pt！`;
               }
               replyText +=
-                "\n\n【貯め方】\n・毎日「おみくじ」と送る → 2pt\n・1日1回メッセージを送る → 1pt\n・配信のリンクを見る → 3pt\n\n貯まったポイントは、資料室の🔒特典（勉強会アーカイブ等）と交換できます📚\nhttps://line-homepage.vercel.app/mypage";
+                "\n\n【貯め方】\n・毎日「おみくじ」と送る → 2pt\n・1日1回メッセージを送る → 1pt\n・配信のリンクを見る → 3pt\n\n貯まったポイントは、資料室の🔒特典（勉強会アーカイブ等）と交換できます📚\nhttps://liff.line.me/2008962368-gb4854LN/mypage";
               await pushMessage(userId, replyText, token);
               await logMessage(supabase, friend.id, {
                 direction: "out",
