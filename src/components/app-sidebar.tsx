@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BadgeCheck,
   Bot,
   ClipboardList,
   Gem,
@@ -55,6 +56,11 @@ const navBot = [
     label: "顧客管理（カルテ）",
     href: "/bot/users",
     icon: Users,
+  },
+  {
+    label: "サロン会員管理",
+    href: "/members",
+    icon: BadgeCheck,
   },
   {
     label: "タグ管理",

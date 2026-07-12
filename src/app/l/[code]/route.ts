@@ -50,6 +50,15 @@ export async function GET(
         .single();
 
       if (friend) {
+        // ポイントは「同じリンクの初回クリックのみ」付与（連打でのpt稼ぎを防ぐ）。
+        // 直前に自分のクリックを insert 済みなので、2件以上あれば過去にクリックがある。
+        const { count: priorClicks } = await supabase
+          .from("link_clicks")
+          .select("*", { count: "exact", head: true })
+          .eq("link_id", link.id)
+          .eq("friend_id", friend.id);
+        const isFirstClick = (priorClicks || 0) <= 1;
+
         await logEvent(supabase, friend.id, "link_click", {
           link_id: link.id,
           code,
@@ -74,8 +83,8 @@ export async function GET(
           }
         }
 
-        // ポイント付与（リンク個別設定。0なら付与なし）
-        if (link.points > 0) {
+        // ポイント付与（リンク個別設定。0なら付与なし・同一リンクは初回のみ）
+        if (link.points > 0 && isFirstClick) {
           await awardPoints(
             supabase,
             { id: friend.id, line_user_id: friend.line_user_id },

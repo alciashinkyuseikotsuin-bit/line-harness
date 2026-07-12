@@ -8,6 +8,12 @@ import type { LineAccount } from "@/lib/accounts";
 // 1通目（delay_minutes=0）は enrollMatchingStepFlows が enroll と同時に
 // 即時送信するため、ここで処理されるのは主に2通目以降（日をまたぐ配信）と、
 // 即時送信が何らかの理由で失敗した分のリトライ。
+//
+// Vercel cron は GET で叩くため、GET も同じ処理につなぐ（POSTのみだと405で空振りする）
+export async function GET() {
+  return POST();
+}
+
 export async function POST() {
   const supabase = getSupabaseAdmin();
   const now = new Date().toISOString();
