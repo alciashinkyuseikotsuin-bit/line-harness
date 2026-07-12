@@ -8,6 +8,14 @@ import { useEffect, useMemo, useState } from "react";
 
 const MEMBER_TAG = "サロン会員";
 
+interface Redemption {
+  id: string;
+  friendName: string;
+  title: string;
+  points: number;
+  redeemedAt: string;
+}
+
 interface Friend {
   id: string;
   display_name: string | null;
@@ -24,6 +32,7 @@ function isMember(f: Friend): boolean {
 
 export default function MembersPage() {
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [redemptions, setRedemptions] = useState<Redemption[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -31,11 +40,16 @@ export default function MembersPage() {
 
   const load = async () => {
     try {
-      const res = await fetch("/api/friends");
-      const json = await res.json();
-      setFriends((json.friends || []) as Friend[]);
+      const [friendsRes, redemptionsRes] = await Promise.all([
+        fetch("/api/friends"),
+        fetch("/api/redemptions"),
+      ]);
+      const friendsJson = await friendsRes.json();
+      setFriends((friendsJson.friends || []) as Friend[]);
+      const redemptionsJson = await redemptionsRes.json();
+      setRedemptions((redemptionsJson.redemptions || []) as Redemption[]);
     } catch {
-      setNotice("友だち一覧の取得に失敗しました");
+      setNotice("一覧の取得に失敗しました");
     }
     setLoading(false);
   };
@@ -205,6 +219,56 @@ export default function MembersPage() {
             members.map((f) => (
               <FriendRowView key={f.id} friend={f} action="remove" />
             ))
+          )}
+        </div>
+      </div>
+
+      {/* 特典交換の台帳（視聴権限の記録） */}
+      <div className="mt-8">
+        <h2 className="text-sm font-bold text-neutral-700">
+          特典交換の台帳（{redemptions.length}件）
+        </h2>
+        <p className="mt-1 text-xs text-neutral-500">
+          この記録がある限り、本人はその特典を<strong>永続的に</strong>閲覧できます
+          （会員解除やポイント残高の変動に影響されません）。
+        </p>
+        <div className="mt-2 overflow-hidden rounded-lg border bg-white">
+          {loading ? (
+            <p className="px-4 py-4 text-xs text-neutral-500">読み込み中…</p>
+          ) : redemptions.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-neutral-500">
+              まだ交換記録はありません
+            </p>
+          ) : (
+            <table className="w-full text-left text-xs">
+              <thead className="bg-neutral-50 text-neutral-500">
+                <tr>
+                  <th className="px-4 py-2 font-medium">日時</th>
+                  <th className="px-4 py-2 font-medium">友だち</th>
+                  <th className="px-4 py-2 font-medium">特典</th>
+                  <th className="px-4 py-2 text-right font-medium">pt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {redemptions.map((r) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="whitespace-nowrap px-4 py-2 text-neutral-500">
+                      {new Date(r.redeemedAt).toLocaleString("ja-JP", {
+                        month: "numeric",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-4 py-2 font-medium">{r.friendName}</td>
+                    <td className="px-4 py-2">{r.title}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right font-medium">
+                      -{r.points}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>
