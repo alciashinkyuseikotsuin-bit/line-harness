@@ -13,12 +13,14 @@ export type PointRules = {
   keyword_default: number;
 };
 
+// ポイントは「配信への反応」でのみ貯まる方針（2026-07-13 オーナー決定）
+// おみくじ・デイリーメッセージでの付与は廃止（0）。機能自体は残すが加算しない。
 const DEFAULT_RULES: PointRules = {
   survey_answer: 5,
   survey_complete: 10,
   link_click: 3,
-  omikuji: 2,
-  daily_message: 1,
+  omikuji: 0,
+  daily_message: 0,
   keyword_default: 0,
 };
 

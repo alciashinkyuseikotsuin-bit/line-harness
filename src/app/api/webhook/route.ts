@@ -15,7 +15,6 @@ import {
   findAutoReply,
   drawOmikuji,
   detectBuiltinCommand,
-  jstToday,
 } from "@/lib/engage";
 import { computeDiagnosisResult } from "@/lib/diagnosis";
 import {
@@ -96,6 +95,7 @@ type FriendRow = {
   tags: string[] | null;
   pending_input: Record<string, unknown> | null;
   display_name: string | null;
+  points: number | null;
 };
 
 // 友だちを取得。未登録ならプロフィールを取得して登録する（アカウント内で）
@@ -106,7 +106,7 @@ async function findOrCreateFriend(
 ): Promise<FriendRow | null> {
   let query = supabase
     .from("friends")
-    .select("id, line_user_id, tags, pending_input, display_name")
+    .select("id, line_user_id, tags, pending_input, display_name, points")
     .eq("line_user_id", lineUserId);
   if (account) query = query.eq("account_id", account.id);
   const { data: existing } = await query.limit(1).maybeSingle();
@@ -130,7 +130,7 @@ async function findOrCreateFriend(
       .upsert(row, {
         onConflict: account ? "account_id,line_user_id" : "line_user_id",
       })
-      .select("id, line_user_id, tags, pending_input, display_name")
+      .select("id, line_user_id, tags, pending_input, display_name, points")
       .single();
     return created as FriendRow | null;
   } catch (err) {
@@ -582,35 +582,27 @@ export async function POST(request: NextRequest) {
           const isText = event.message?.type === "text" && !!event.message?.text;
           const inboundText: string = isText ? event.message.text : "";
 
-          // === デイリーポイント判定用: 今日（JST）の受信が既にあるか（ログ記録前に確認） ===
-          const jstDayStartUtc = new Date(`${jstToday()}T00:00:00+09:00`).toISOString();
-          const { count: todayInbound } = await supabase
-            .from("messages")
-            .select("*", { count: "exact", head: true })
-            .eq("friend_id", friend.id)
-            .eq("direction", "in")
-            .gte("created_at", jstDayStartUtc);
-          const isFirstMessageToday = (todayInbound || 0) === 0;
-
-          // 受信ログ（テキスト以外もタイプを記録）
-          await logMessage(supabase, friend.id, {
-            direction: "in",
-            messageType: event.message?.type || "unknown",
-            content: isText ? inboundText : `[${event.message?.type || "unknown"}]`,
-            source: "webhook",
-          });
-          await logEvent(supabase, friend.id, "message", {
-            message_type: event.message?.type || "unknown",
-          });
-
-          // 最終アクティブ更新
-          await supabase
-            .from("friends")
-            .update({ last_active_at: new Date().toISOString() })
-            .eq("id", friend.id);
-
-          const rules = await getPointRules(supabase, accountId);
-
+          // === 応答速度の要 ===
+          // 受信ログ・イベント記録・最終アクティブ更新は返信内容に影響しないため、
+          // 返信を先に送り、これらは deferred にためて各分岐の最後でまとめて待つ。
+          // （serverless のため、レスポンスを返す前に必ず flush() で完了を待つこと）
+          const deferred: Promise<unknown>[] = [
+            logMessage(supabase, friend.id, {
+              direction: "in",
+              messageType: event.message?.type || "unknown",
+              content: isText
+                ? inboundText
+                : `[${event.message?.type || "unknown"}]`,
+              source: "webhook",
+            }),
+            logEvent(supabase, friend.id, "message", {
+              message_type: event.message?.type || "unknown",
+            }),
+          ];
+          // deferred の完了保証は下の try/finally が構造的に行う。
+          // 分岐ごとに flush を呼ぶ方式は「break の追加し忘れ」「例外時のログ消失」が
+          // 起きるため採らない。break でも throw でも finally は必ず実行される。
+          try {
           // === 1) 自由記入待ち（アンケートの「その他」入力）===
           const pendingInput = friend.pending_input as {
             type?: string;
@@ -674,7 +666,7 @@ export async function POST(request: NextRequest) {
                 console.error("自由記入後の次質問/完了送信エラー:", nextErr);
               }
             }
-            await recalcFriendScore(supabase, friend.id);
+            deferred.push(recalcFriendScore(supabase, friend.id));
             break;
           }
 
@@ -687,10 +679,14 @@ export async function POST(request: NextRequest) {
               let replyText: string;
               if (result.status === "drawn") {
                 replyText = `⛩️ 今日の運勢は…\n\n【${result.fortune}】\n\n${result.message}`;
-                await logEvent(supabase, friend.id, "omikuji", {
-                  fortune: result.fortune,
-                  item_id: result.itemId,
-                });
+                deferred.push(
+                  logEvent(supabase, friend.id, "omikuji", {
+                    fortune: result.fortune,
+                    item_id: result.itemId,
+                  })
+                );
+                // おみくじでのポイント付与は廃止（2026-07-13）。設定で明示的に>0の場合のみ付与
+                const rules = await getPointRules(supabase, accountId);
                 if (rules.omikuji > 0) {
                   await awardPoints(
                     supabase,
@@ -707,12 +703,14 @@ export async function POST(request: NextRequest) {
                 replyText = "おみくじは準備中です。もう少しお待ちください！";
               }
               await pushMessage(userId, replyText, token);
-              await logMessage(supabase, friend.id, {
-                direction: "out",
-                content: replyText,
-                source: "omikuji",
-              });
-              await recalcFriendScore(supabase, friend.id);
+              deferred.push(
+                logMessage(supabase, friend.id, {
+                  direction: "out",
+                  content: replyText,
+                  source: "omikuji",
+                }),
+                recalcFriendScore(supabase, friend.id)
+              );
               break;
             }
 
@@ -731,12 +729,14 @@ export async function POST(request: NextRequest) {
                   const replyText =
                     "アンケートにはすでにご回答いただいています🙏\nあなたに合わせたプレゼントもお届け済みです。\n\n状況が変わったのでもう一度回答し直したい場合は、「再診断」と送ってください。\n\n資料室はこちら📚\nhttps://liff.line.me/2008962368-gb4854LN/library";
                   await pushMessage(userId, replyText, token);
-                  await logMessage(supabase, friend.id, {
-                    direction: "out",
-                    content: replyText,
-                    source: "survey",
-                  });
-                  await recalcFriendScore(supabase, friend.id);
+                  deferred.push(
+                    logMessage(supabase, friend.id, {
+                      direction: "out",
+                      content: replyText,
+                      source: "survey",
+                    }),
+                    recalcFriendScore(supabase, friend.id)
+                  );
                   break;
                 }
               }
@@ -768,23 +768,21 @@ export async function POST(request: NextRequest) {
               if (!sent) {
                 const replyText = "現在お送りできるアンケートがありません。もう少しお待ちください🙏";
                 await pushMessage(userId, replyText, token);
-                await logMessage(supabase, friend.id, {
-                  direction: "out",
-                  content: replyText,
-                  source: "survey",
-                });
+                deferred.push(
+                  logMessage(supabase, friend.id, {
+                    direction: "out",
+                    content: replyText,
+                    source: "survey",
+                  })
+                );
               }
-              await recalcFriendScore(supabase, friend.id);
+              deferred.push(recalcFriendScore(supabase, friend.id));
               break;
             }
 
             if (builtin === "points") {
-              const { data: f } = await supabase
-                .from("friends")
-                .select("points")
-                .eq("id", friend.id)
-                .single();
-              const pts = f?.points || 0;
+              // 残高は findOrCreateFriend で取得済みの値を使う（再クエリしない＝応答高速化）
+              const pts = friend.points || 0;
 
               // 次の特典までの残りを案内（同じアカウントの特典のみ）
               let nextRewardQuery = supabase
@@ -805,13 +803,15 @@ export async function POST(request: NextRequest) {
                 replyText += `\n\n次の特典「${nextReward.title}」まであと ${nextReward.threshold - pts}pt！`;
               }
               replyText +=
-                "\n\n【貯め方】\n・毎日「おみくじ」と送る → 2pt\n・1日1回メッセージを送る → 1pt\n・配信のリンクを見る → 3pt\n\n貯まったポイントは、資料室の🔒特典（勉強会アーカイブ等）と交換できます📚\nhttps://liff.line.me/2008962368-gb4854LN/mypage";
+                "\n\n【ポイントの貯め方】\n・配信で紹介するリンクをチェック → 3pt\n・アンケート（1分問診）に回答 → 最大24pt\n・配信のキーワード企画に参加 → 企画ごとに案内\n\n貯まったポイントは、資料室の🔒特典（勉強会アーカイブ等）と交換できます📚\nhttps://liff.line.me/2008962368-gb4854LN/mypage";
               await pushMessage(userId, replyText, token);
-              await logMessage(supabase, friend.id, {
-                direction: "out",
-                content: replyText,
-                source: "system",
-              });
+              deferred.push(
+                logMessage(supabase, friend.id, {
+                  direction: "out",
+                  content: replyText,
+                  source: "system",
+                })
+              );
               break;
             }
 
@@ -824,17 +824,19 @@ export async function POST(request: NextRequest) {
             );
             if (autoReply) {
               await pushMessage(userId, autoReply.reply_text, token);
-              await logMessage(supabase, friend.id, {
-                direction: "out",
-                content: autoReply.reply_text,
-                source: "auto_reply",
-                metadata: { reply_id: autoReply.id, name: autoReply.name },
-              });
-              await logEvent(supabase, friend.id, "keyword_reply", {
-                reply_id: autoReply.id,
-                name: autoReply.name,
-                keyword_text: inboundText,
-              });
+              deferred.push(
+                logMessage(supabase, friend.id, {
+                  direction: "out",
+                  content: autoReply.reply_text,
+                  source: "auto_reply",
+                  metadata: { reply_id: autoReply.id, name: autoReply.name },
+                }),
+                logEvent(supabase, friend.id, "keyword_reply", {
+                  reply_id: autoReply.id,
+                  name: autoReply.name,
+                  keyword_text: inboundText,
+                })
+              );
 
               // タグ付与
               const addTags = (autoReply.add_tags || []).filter(Boolean);
@@ -871,18 +873,26 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // === 4) 今日はじめてのメッセージにデイリーポイント ===
-          if (isFirstMessageToday && rules.daily_message > 0) {
-            await awardPoints(
-              supabase,
-              { id: friend.id, line_user_id: userId },
-              rules.daily_message,
-              "デイリーメッセージ",
-              {}
-            );
-          }
+          // デイリーメッセージポイントは廃止（2026-07-13 オーナー決定・配信への反応でのみ貯まる方針）
 
-          await recalcFriendScore(supabase, friend.id);
+          deferred.push(recalcFriendScore(supabase, friend.id));
+          } finally {
+            // break でも throw でもここは必ず通る（serverless: レスポンス前に全タスク完了を保証）
+            deferred.push(
+              Promise.resolve(
+                supabase
+                  .from("friends")
+                  .update({ last_active_at: new Date().toISOString() })
+                  .eq("id", friend.id)
+              )
+            );
+            const results = await Promise.allSettled(deferred);
+            for (const r of results) {
+              if (r.status === "rejected") {
+                console.error("deferred task failed:", r.reason);
+              }
+            }
+          }
           break;
         }
       }
