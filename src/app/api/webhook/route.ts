@@ -603,6 +603,33 @@ export async function POST(request: NextRequest) {
           // 分岐ごとに flush を呼ぶ方式は「break の追加し忘れ」「例外時のログ消失」が
           // 起きるため採らない。break でも throw でも finally は必ず実行される。
           try {
+          // === 0) サイトのコードログイン（「ログイン 123456」）===
+          // 公式サイトが発行した6桁コードを本人がLINEで送る → site_login イベントを記録
+          // → サイト側(/api/auth/status)がこれを検知してログイン完了する。
+          // パターンが特殊なため他のどの処理よりも先に判定する。
+          if (isText) {
+            const loginMatch = inboundText
+              .trim()
+              .match(/^ログイン[ 　]*([0-9]{6})$/);
+            if (loginMatch) {
+              // サイトのポーリングが見つけられるよう、イベント記録は返信より先に確定させる
+              await logEvent(supabase, friend.id, "site_login", {
+                code: loginMatch[1],
+              });
+              const replyText =
+                "✅ 本人確認ができました！\nサイトの画面に戻ると、自動でログイン済みに切り替わります。";
+              await pushMessage(userId, replyText, token);
+              deferred.push(
+                logMessage(supabase, friend.id, {
+                  direction: "out",
+                  content: replyText,
+                  source: "system",
+                })
+              );
+              break;
+            }
+          }
+
           // === 1) 自由記入待ち（アンケートの「その他」入力）===
           const pendingInput = friend.pending_input as {
             type?: string;
