@@ -727,7 +727,7 @@ export async function POST(request: NextRequest) {
                   .maybeSingle();
                 if (doneEvent) {
                   const replyText =
-                    "アンケートにはすでにご回答いただいています🙏\nあなたに合わせたプレゼントもお届け済みです。\n\n状況が変わったのでもう一度回答し直したい場合は、「再診断」と送ってください。\n\n資料室はこちら📚\nhttps://liff.line.me/2008962368-gb4854LN/library";
+                    "アンケートにはすでにご回答いただいています🙏\nあなたに合わせたプレゼントもお届け済みです。\n\n状況が変わったのでもう一度回答し直したい場合は、「再診断」と送ってください。";
                   await pushMessage(userId, replyText, token);
                   deferred.push(
                     logMessage(supabase, friend.id, {
@@ -803,7 +803,7 @@ export async function POST(request: NextRequest) {
                 replyText += `\n\n次の特典「${nextReward.title}」まであと ${nextReward.threshold - pts}pt！`;
               }
               replyText +=
-                "\n\n【ポイントの貯め方】\n・配信で紹介するリンクをチェック → 5pt\n・アンケート（1分問診）に回答 → 最大24pt\n・配信のキーワード企画に参加 → 企画ごとに案内\n\n貯まったポイントは、資料室の🔒ポイント特典と交換できます📚\nhttps://liff.line.me/2008962368-gb4854LN/mypage";
+                "\n\n【ポイントの貯め方】\n・配信で紹介するリンクをチェック → 5pt\n・アンケート（1分問診）に回答 → 最大24pt\n・配信のキーワード企画に参加 → 企画ごとに案内\n\n貯まったポイントは、資料室の🔒ポイント特典と交換できます📚（交換ページは現在調整中です。準備ができ次第ご案内します）";
               await pushMessage(userId, replyText, token);
               deferred.push(
                 logMessage(supabase, friend.id, {
