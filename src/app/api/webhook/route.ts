@@ -803,7 +803,7 @@ export async function POST(request: NextRequest) {
                 replyText += `\n\n次の特典「${nextReward.title}」まであと ${nextReward.threshold - pts}pt！`;
               }
               replyText +=
-                "\n\n【ポイントの貯め方】\n・配信で紹介するリンクをチェック → 3pt\n・アンケート（1分問診）に回答 → 最大24pt\n・配信のキーワード企画に参加 → 企画ごとに案内\n\n貯まったポイントは、資料室の🔒特典（勉強会アーカイブ等）と交換できます📚\nhttps://liff.line.me/2008962368-gb4854LN/mypage";
+                "\n\n【ポイントの貯め方】\n・配信で紹介するリンクをチェック → 5pt\n・アンケート（1分問診）に回答 → 最大24pt\n・配信のキーワード企画に参加 → 企画ごとに案内\n\n貯まったポイントは、資料室の🔒ポイント特典と交換できます📚\nhttps://liff.line.me/2008962368-gb4854LN/mypage";
               await pushMessage(userId, replyText, token);
               deferred.push(
                 logMessage(supabase, friend.id, {

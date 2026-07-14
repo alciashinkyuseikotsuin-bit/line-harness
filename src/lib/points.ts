@@ -18,7 +18,7 @@ export type PointRules = {
 const DEFAULT_RULES: PointRules = {
   survey_answer: 5,
   survey_complete: 10,
-  link_click: 3,
+  link_click: 5, // 2026-07-14改定: 3→5（月8配信で40pt/月ペース、特典到達を現実的に）
   omikuji: 0,
   daily_message: 0,
   keyword_default: 0,
