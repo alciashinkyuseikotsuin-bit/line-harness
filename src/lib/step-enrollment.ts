@@ -78,6 +78,18 @@ export async function enrollMatchingStepFlows(
 
     if (!matched) continue;
 
+    // 【重要】一度でも登録されたことのあるフローには絶対に再登録しない。
+    // 以前は upsert(ignoreDuplicates:false) で既存行を active/step0 に上書きしており、
+    // タグが変わるたびに配信済みフローが最初から再送される事故が起きた
+    // （例: 「入会希望」タグ付与→過去の単価UPプレゼントが再送）。
+    const { data: existing } = await supabase
+      .from("step_enrollments")
+      .select("id")
+      .eq("flow_id", flow.id)
+      .eq("friend_id", friendId)
+      .limit(1);
+    if (existing && existing.length > 0) continue;
+
     // first step's delay を取得
     const { data: firstStep } = await supabase
       .from("step_messages")
@@ -93,22 +105,17 @@ export async function enrollMatchingStepFlows(
 
     const { data: enrollment } = await supabase
       .from("step_enrollments")
-      .upsert(
-        {
-          flow_id: flow.id,
-          friend_id: friendId,
-          current_step: 0,
-          status: "active",
-          enrolled_at: new Date().toISOString(),
-          next_send_at: nextSendAt.toISOString(),
-        },
-        { onConflict: "flow_id,friend_id", ignoreDuplicates: false }
-      )
+      .insert({
+        flow_id: flow.id,
+        friend_id: friendId,
+        current_step: 0,
+        status: "active",
+        enrolled_at: new Date().toISOString(),
+        next_send_at: nextSendAt.toISOString(),
+      })
       .select("id, status")
       .single();
 
-    // 既存の enrollment を再度なぞっただけ（既に completed 済み等）の場合は
-    // 二重送信を避けるため即時送信の対象にしない。今回新規/active化したものだけを送る。
     if (enrollment && delayMinutes <= 0 && enrollment.status === "active") {
       immediateEnrollmentIds.push(enrollment.id);
     }
