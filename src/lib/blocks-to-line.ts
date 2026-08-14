@@ -11,6 +11,35 @@ import { buildSurveyFlexMessage } from "@/lib/line";
  * 既存の同期版 blocksToLineMessages (lib/line.ts) は survey 型を無視するため、
  * アンケートを含む配信ではこちらを使うこと。
  */
+/**
+ * ブロック配列に含まれる「ステップ配信専用（step_only）」アンケートのタイトル一覧を返す。
+ *
+ * 一斉配信・セグメント配信・予約配信の入口でこれを呼び、結果が空でなければ送信を拒否する。
+ * step_only アンケートは新規登録者向けステップ配信の中だけで送る想定のため、
+ * 全友だちへの誤配信を仕組みで防ぐ。
+ *
+ * migration 008 未実行（step_only カラムが無い）環境ではエラーになるため、
+ * その場合は空配列を返して従来動作を維持する。
+ */
+export async function findStepOnlySurveyTitles(
+  blocks: MessageBlock[],
+  supabase: SupabaseClient
+): Promise<string[]> {
+  const surveyIds = blocks
+    .filter((b) => b.type === "survey" && b.surveyId)
+    .map((b) => b.surveyId as string);
+  if (surveyIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("surveys")
+    .select("id, title, step_only")
+    .in("id", surveyIds)
+    .eq("step_only", true);
+
+  if (error || !data) return [];
+  return data.map((s) => s.title as string);
+}
+
 export async function blocksToLineMessagesAsync(
   blocks: MessageBlock[],
   supabase: SupabaseClient

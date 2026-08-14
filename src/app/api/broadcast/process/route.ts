@@ -4,7 +4,10 @@ import {
   broadcastMessages,
   multicastMessages,
 } from "@/lib/line";
-import { blocksToLineMessagesAsync } from "@/lib/blocks-to-line";
+import {
+  blocksToLineMessagesAsync,
+  findStepOnlySurveyTitles,
+} from "@/lib/blocks-to-line";
 import type { MessageBlock } from "@/types/blocks";
 import { logMessagesBulk } from "@/lib/logging";
 import {
@@ -84,6 +87,20 @@ async function runProcess() {
           .from("broadcasts")
           .update({ status: "failed" })
           .eq("id", b.id);
+        continue;
+      }
+
+      // ステップ配信専用アンケートを含む予約配信は送信しない（最後の安全網）。
+      // API側のガードを通り抜けた古い予約が残っていても、ここで failed にして止める
+      const stepOnlyTitles = await findStepOnlySurveyTitles(blocks, supabase);
+      if (stepOnlyTitles.length > 0) {
+        await supabase
+          .from("broadcasts")
+          .update({ status: "failed" })
+          .eq("id", b.id);
+        errors.push(
+          `${b.id}: ステップ配信専用アンケート「${stepOnlyTitles.join("」「")}」を含むため送信中止`
+        );
         continue;
       }
 

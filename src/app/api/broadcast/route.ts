@@ -6,7 +6,10 @@ import {
   multicastMessage,
   multicastMessages,
 } from "@/lib/line";
-import { blocksToLineMessagesAsync } from "@/lib/blocks-to-line";
+import {
+  blocksToLineMessagesAsync,
+  findStepOnlySurveyTitles,
+} from "@/lib/blocks-to-line";
 import type { MessageBlock } from "@/types/blocks";
 import { logMessagesBulk } from "@/lib/logging";
 import {
@@ -72,6 +75,24 @@ export async function POST(request: NextRequest) {
   const account = await getAccountFromRequest(supabase, request);
   const accountId = account?.id;
   const token = resolveToken(account);
+
+  // ステップ配信専用アンケートのガード:
+  // 一斉・セグメント・予約・下書きのどの経路でも、step_only アンケートを含む配信は受け付けない。
+  // （このアンケートは新規登録者の2日目ステップでのみ送る運用のため、全員配信を仕組みで禁止）
+  if (Array.isArray(blocks)) {
+    const stepOnlyTitles = await findStepOnlySurveyTitles(
+      blocks as MessageBlock[],
+      supabase
+    );
+    if (stepOnlyTitles.length > 0) {
+      return NextResponse.json(
+        {
+          error: `「${stepOnlyTitles.join("」「")}」はステップ配信専用のアンケートです。一斉・セグメント・予約配信では送信できません（新規登録者向けステップ配信の中でのみ送れます）`,
+        },
+        { status: 400 }
+      );
+    }
+  }
 
   // 予約配信モード: scheduledAt が未来時刻なら status='scheduled' で保存
   if (scheduledAt) {

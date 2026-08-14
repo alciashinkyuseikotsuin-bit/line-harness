@@ -3,12 +3,44 @@ import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   getUserProfile,
-  pushMessage,
-  pushMessages,
+  pushMessage as pushMessageLive,
+  pushMessages as pushMessagesLive,
   buildSurveyFlexMessage,
 } from "@/lib/line";
+
+// 2026-07-18 オーナー指示（クレーム対応）: webhook起点の自動応答（挨拶アンケート・
+// アンケート続き質問・キーワード応答・ポイント/おみくじ/ログイン応答）を全停止。
+// 受信の記録・友だち登録・回答保存は動き続ける。送信だけが止まる。
+// 復旧時はこの定数を false に戻してデプロイする。
+const AUTO_RESPONSES_DISABLED = true;
+
+const pushMessage = async (
+  ...args: Parameters<typeof pushMessageLive>
+): Promise<unknown> => {
+  if (AUTO_RESPONSES_DISABLED) {
+    console.log("[AUTO_RESPONSES_DISABLED] push skipped");
+    return null;
+  }
+  return pushMessageLive(...args);
+};
+
+const pushMessages = async (
+  ...args: Parameters<typeof pushMessagesLive>
+): Promise<unknown> => {
+  if (AUTO_RESPONSES_DISABLED) {
+    console.log("[AUTO_RESPONSES_DISABLED] push skipped");
+    return null;
+  }
+  return pushMessagesLive(...args);
+};
+
+// 停止中は「送っていない送信」を messages に残さない（受信ログはそのまま記録）
+const logMessage: typeof logMessageLive = async (supabaseClient, friendId, opts) => {
+  if (AUTO_RESPONSES_DISABLED && opts.direction === "out") return;
+  return logMessageLive(supabaseClient, friendId, opts);
+};
 import { enrollMatchingStepFlows } from "@/lib/step-enrollment";
-import { logMessage, logEvent } from "@/lib/logging";
+import { logMessage as logMessageLive, logEvent } from "@/lib/logging";
 import { awardPoints, getPointRules } from "@/lib/points";
 import { recalcFriendScore } from "@/lib/engagement";
 import {
@@ -151,6 +183,8 @@ async function sendActiveSurveyFirstQuestion(
   greetingText: string
 ): Promise<boolean> {
   try {
+    // step_only（ステップ配信専用）のアンケートは、友だち追加直後や
+    // キーワード呼び出しでは送らない（新規登録者の2日目ステップでのみ送る）
     let surveyQuery = supabase
       .from("surveys")
       .select(
@@ -160,6 +194,7 @@ async function sendActiveSurveyFirstQuestion(
         )`
       )
       .eq("status", "active")
+      .eq("step_only", false)
       .order("created_at", { ascending: false })
       .limit(1);
     if (accountId) {
@@ -359,12 +394,35 @@ export async function POST(request: NextRequest) {
                 ? "account_id,line_user_id"
                 : "line_user_id",
             })
-            .select("id")
+            .select("id, tags")
             .single();
           if (followed) {
             await logEvent(supabase, followed.id, "follow", {});
 
-            // ウェルカムアンケートを自動送信（最新のstatus=active）
+            // 「友だち追加」タグを付与し、このタグをトリガーにする
+            // ウェルカムステップフロー（0日目特典→1日目教育→2日目アンケート）へ登録する。
+            // 既に登録済みのフローには enrollMatchingStepFlows 側で再登録されないため、
+            // ブロック解除→再追加でウェルカム配信が二重に走ることはない。
+            const FOLLOW_TAG = "友だち追加";
+            const followTags: string[] =
+              (followed.tags as string[] | null) || [];
+            const tagsWithFollow = followTags.includes(FOLLOW_TAG)
+              ? followTags
+              : [...followTags, FOLLOW_TAG];
+            if (tagsWithFollow !== followTags) {
+              await supabase
+                .from("friends")
+                .update({ tags: tagsWithFollow })
+                .eq("id", followed.id);
+            }
+            await enrollMatchingStepFlows(
+              supabase,
+              followed.id,
+              tagsWithFollow,
+              accountId
+            );
+
+            // ウェルカムアンケートを自動送信（最新のstatus=active、step_only除く）
             await sendActiveSurveyFirstQuestion(
               supabase,
               followed.id,

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { findStepOnlySurveyTitles } from "@/lib/blocks-to-line";
+import type { MessageBlock } from "@/types/blocks";
 
 // 配信1件取得（下書き編集用）
 export async function GET(
@@ -52,6 +54,22 @@ export async function PATCH(
   }
 
   const { title, blocks, targetType, targetTags, scheduledAt } = body;
+
+  // ステップ配信専用アンケートは下書き・予約のどの形でも配信に含められない
+  if (Array.isArray(blocks)) {
+    const stepOnlyTitles = await findStepOnlySurveyTitles(
+      blocks as MessageBlock[],
+      supabase
+    );
+    if (stepOnlyTitles.length > 0) {
+      return NextResponse.json(
+        {
+          error: `「${stepOnlyTitles.join("」「")}」はステップ配信専用のアンケートです。一斉・セグメント・予約配信では送信できません`,
+        },
+        { status: 400 }
+      );
+    }
+  }
 
   // 予約日時の検証（指定された場合のみ）
   let scheduledAtIso: string | null = null;

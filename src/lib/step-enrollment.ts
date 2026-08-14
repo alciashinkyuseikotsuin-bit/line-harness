@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { pushMessage } from "@/lib/line";
+import { pushMessage, pushMessages } from "@/lib/line";
 import { logMessage } from "@/lib/logging";
 import { renderTemplate, type FriendForPersonalize } from "@/lib/personalize";
 import { getAccountById, resolveToken, type LineAccount } from "@/lib/accounts";
+import { blocksToLineMessagesAsync } from "@/lib/blocks-to-line";
+import type { MessageBlock } from "@/types/blocks";
 
 type StepFlowRow = {
   id: string;
@@ -148,7 +150,7 @@ export async function processDueEnrollmentById(
   const { data: enrollment } = await supabase
     .from("step_enrollments")
     .select(
-      "*, step_flows(id, status, account_id), friends(id, line_user_id, display_name, points, stage)"
+      "*, step_flows(id, status, account_id), friends(id, line_user_id, display_name, points, stage, is_blocked)"
     )
     .eq("id", enrollmentId)
     .eq("status", "active")
@@ -156,6 +158,16 @@ export async function processDueEnrollmentById(
 
   if (!enrollment) return { sent: false, completed: false };
   if (enrollment.step_flows?.status !== "active") return { sent: false, completed: false };
+
+  // ブロック済みの友だちには送れない。enrollment を cancel して巡回のたびの
+  // 送信エラー（永久リトライ）を防ぐ
+  if ((enrollment.friends as { is_blocked?: boolean } | null)?.is_blocked) {
+    await supabase
+      .from("step_enrollments")
+      .update({ status: "cancelled" })
+      .eq("id", enrollment.id);
+    return { sent: false, completed: false };
+  }
 
   const { data: messages } = await supabase
     .from("step_messages")
@@ -184,12 +196,40 @@ export async function processDueEnrollmentById(
   }
   const token = resolveToken(accountId ? cache.get(accountId) || null : null);
 
-  const text = friend ? renderTemplate(currentMessage.message_text, friend) : currentMessage.message_text;
-  await pushMessage(lineUserId, text, token);
+  // message_blocks があればブロックとして送信（テキスト・画像・動画・アンケートFlex）。
+  // アンケートブロックはこの友だち1人だけに送られるため、
+  // 「新規登録者の2日目にだけアンケートを流す」の実現経路になる。
+  // blocks が無い旧データは従来どおり message_text をテキスト送信。
+  const blocks = currentMessage.message_blocks as MessageBlock[] | null;
+  let logContent: string;
+
+  if (Array.isArray(blocks) && blocks.length > 0) {
+    const personalized: MessageBlock[] = friend
+      ? blocks.map((b) =>
+          b.type === "text" && b.text
+            ? { ...b, text: renderTemplate(b.text, friend) }
+            : b
+        )
+      : blocks;
+    const lineMessages = await blocksToLineMessagesAsync(personalized, supabase);
+    if (lineMessages.length === 0) return { sent: false, completed: false };
+    await pushMessages(lineUserId, lineMessages, token);
+    logContent =
+      personalized
+        .filter((b) => b.type === "text" && b.text)
+        .map((b) => b.text)
+        .join("\n") || `[${personalized.map((b) => b.type).join(",")}]`;
+  } else {
+    const text = friend
+      ? renderTemplate(currentMessage.message_text, friend)
+      : currentMessage.message_text;
+    await pushMessage(lineUserId, text, token);
+    logContent = text;
+  }
 
   await logMessage(supabase, enrollment.friend_id, {
     direction: "out",
-    content: text,
+    content: logContent,
     source: "step",
     metadata: { flow_id: enrollment.flow_id, step: enrollment.current_step },
   });
