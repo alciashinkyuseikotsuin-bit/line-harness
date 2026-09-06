@@ -16,6 +16,31 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 
+const SEND_FEATURE_LABELS: Record<string, string> = {
+  keyword_reply: "キーワード自動応答", greeting_survey: "友だち追加時の挨拶・アンケート",
+  survey_followup: "アンケートの続き・完了案内", points: "ポイント・特典", omikuji: "おみくじ",
+  login: "ログインコード確認", step_flow: "ステップ配信（巡回）", tag_triggered: "タグ追加からの即時配信",
+  link_triggered: "リンククリックからの即時配信", scheduled_broadcast: "一斉・予約・アンケート配信", manual_chat: "カルテからの手動送信",
+};
+const FEATURE_KEYS = Object.keys(SEND_FEATURE_LABELS);
+type SendMode = "off" | "test_only" | "on";
+type SendGate = {
+  mode: SendMode;
+  dbMode: SendMode;
+  toggles: Record<string, boolean>;
+  environmentMode?: SendMode;
+  stats: { sent: number | null; skipped: number | null };
+};
+
+function isSendGate(value: unknown): value is SendGate {
+  if (!value || typeof value !== "object") return false;
+  const gate = value as Partial<SendGate>;
+  return ["off", "test_only", "on"].includes(gate.mode || "")
+    && ["off", "test_only", "on"].includes(gate.dbMode || "")
+    && !!gate.toggles && typeof gate.toggles === "object"
+    && !!gate.stats && typeof gate.stats === "object";
+}
+
 const WEBHOOK_URL = "https://line-harness-mu.vercel.app/api/webhook";
 
 type Account = {
@@ -49,6 +74,9 @@ export default function SettingsPage() {
 
   const [deleteError, setDeleteError] = useState<Record<string, string>>({});
   const [copied, setCopied] = useState(false);
+  const [sendGate, setSendGate] = useState<SendGate | null>(null);
+  const [savingGate, setSavingGate] = useState(false);
+  const [sendGateError, setSendGateError] = useState("");
 
   const loadAccounts = () => {
     setLoading(true);
@@ -64,7 +92,43 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadAccounts();
+    apiFetch("/api/settings/send-gate")
+      .then(async (res) => ({ res, data: await res.json().catch(() => null) }))
+      .then(({ res, data }) => {
+        if (!res.ok || !isSendGate(data)) {
+          setSendGateError(data?.error || "送信制御を読み込めませんでした");
+          return;
+        }
+        setSendGate(data);
+      })
+      .catch(() => setSendGateError("送信制御を読み込めませんでした"));
   }, []);
+
+  const saveGate = async (next: SendGate) => {
+    setSendGateError("");
+    setSavingGate(true);
+    try {
+      const res = await apiFetch("/api/settings/send-gate", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: next.dbMode, toggles: next.toggles }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !isSendGate({ ...next, ...data, stats: next.stats })) {
+        setSendGateError(data?.error || "送信制御を保存できませんでした");
+        return;
+      }
+      setSendGate({ ...next, ...data, stats: next.stats });
+    } catch {
+      setSendGateError("送信制御を保存できませんでした");
+    } finally {
+      setSavingGate(false);
+    }
+  };
+  const changeMode = (mode: SendMode) => {
+    if (!sendGate || (mode === "on" && !window.confirm("本当に本番送信を有効にしますか？")) || (mode === "off" && !window.confirm("送信を停止しますか？"))) return;
+    void saveGate({ ...sendGate, dbMode: mode });
+  };
 
   const handleCopyWebhook = async () => {
     try {
@@ -169,6 +233,26 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-bold">設定</h1>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">送信制御</CardTitle><CardDescription>LINE送信の安全な有効化と機能ごとの許可を管理します。</CardDescription></CardHeader>
+        <CardContent className="space-y-4">
+          {sendGateError && <p className="text-sm text-destructive">{sendGateError}</p>}
+          {!sendGate ? <p className="text-sm text-muted-foreground">読み込み中...</p> : <>
+            <p className="text-sm">現在有効なモード: <strong>{sendGate.mode}</strong></p>
+            {sendGate.environmentMode && <p className="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm">環境変数 <code>LINE_SEND_MODE={sendGate.environmentMode}</code> が優先されています（DBの設定は無視されます）。</p>}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">DBに保存する送信モード</p>
+              {([ ["off", "停止中（何も送らない）"], ["test_only", "テストのみ（テスト配信タグの友だちにのみ送る）"], ["on", "本番（設定した機能のみ送る）"] ] as const).map(([mode, label]) => <label className="flex items-center gap-2 text-sm" key={mode}><input type="radio" checked={sendGate.dbMode === mode} disabled={savingGate} onChange={() => changeMode(mode)} />{label}</label>)}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <p className="col-span-full text-sm font-medium">機能別送信許可</p>
+              {FEATURE_KEYS.map((feature) => <label key={feature} className="flex items-center justify-between rounded border p-2 text-sm"><span>{SEND_FEATURE_LABELS[feature]}</span><input type="checkbox" checked={!!sendGate.toggles[feature]} disabled={savingGate} onChange={(event) => void saveGate({ ...sendGate, toggles: { ...sendGate.toggles, [feature]: event.target.checked } })} /></label>)}
+            </div>
+            <div className="flex gap-6 rounded bg-muted p-3 text-sm"><span>直近24時間の送信数: <strong>{sendGate.stats.sent ?? "取得不可"}</strong></span><span>スキップ数: <strong>{sendGate.stats.skipped ?? "取得不可"}</strong></span></div>
+          </>}
+        </CardContent>
+      </Card>
 
       <Card id="accounts">
         <CardHeader>

@@ -73,9 +73,9 @@ export async function POST(request: NextRequest) {
       fileName: file.name,
       size: file.size,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
-      { error: err.message || "アップロードに失敗しました" },
+      { error: (err instanceof Error ? err.message : null) || "アップロードに失敗しました" },
       { status: 500 }
     );
   }

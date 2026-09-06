@@ -94,7 +94,7 @@ export default function StepPage() {
       .then((r) => r.json())
       .then((d) =>
         setSurveys(
-          (d.surveys || []).map((s: any) => ({ id: s.id, title: s.title }))
+          (d.surveys || []).map((s: { id: string; title: string }) => ({ id: s.id, title: s.title }))
         )
       )
       .catch(() => {});

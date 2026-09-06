@@ -48,9 +48,9 @@ export async function POST(request: NextRequest) {
       synced,
       failed,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
-      { error: err.message || "同期に失敗しました" },
+      { error: (err instanceof Error ? err.message : null) || "同期に失敗しました" },
       { status: 500 }
     );
   }

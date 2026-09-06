@@ -38,7 +38,7 @@ export default function SegmentPage() {
       .then((d) => {
         const friends = d.friends || [];
         const tagMap: Record<string, number> = {};
-        friends.forEach((f: any) => {
+        friends.forEach((f: { tags: string[] | null }) => {
           (f.tags || []).forEach((t: string) => {
             tagMap[t] = (tagMap[t] || 0) + 1;
           });
@@ -55,7 +55,7 @@ export default function SegmentPage() {
       .then((r) => r.json())
       .then((d) =>
         setSurveys(
-          (d.surveys || []).map((s: any) => ({ id: s.id, title: s.title }))
+          (d.surveys || []).map((s: { id: string; title: string }) => ({ id: s.id, title: s.title }))
         )
       )
       .catch(() => {});
@@ -70,7 +70,7 @@ export default function SegmentPage() {
       .then((r) => r.json())
       .then((d) => {
         const friends = d.friends || [];
-        const matched = friends.filter((f: any) =>
+        const matched = friends.filter((f: { tags: string[] | null }) =>
           selectedTags.some((t) => (f.tags || []).includes(t))
         );
         setMatchCount(matched.length);

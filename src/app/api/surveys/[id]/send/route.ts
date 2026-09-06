@@ -94,7 +94,7 @@ export async function POST(
 
   // 質問をソート
   const questions = (survey.survey_questions || []).sort(
-    (a: any, b: any) => a.sort_order - b.sort_order
+    (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
   );
 
   // テスト配信は何度でも可能な設計のため、過去の回答が残っていると
@@ -118,19 +118,21 @@ export async function POST(
   if (questions.length > 0) {
     const firstQ = questions[0];
     const choices = (firstQ.survey_choices || [])
-      .sort((a: any, b: any) => a.sort_order - b.sort_order)
-      .map((c: any) => ({ id: c.id, text: c.choice_text }));
+      .sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order)
+      .map((c: { id: string; choice_text: string }) => ({ id: c.id, text: c.choice_text }));
 
     for (const friend of friends) {
       try {
-        await sendSurveyMessage(
+        const sent = await sendSurveyMessage(
           friend.line_user_id,
           survey.id,
           firstQ.id,
           firstQ.question_text,
           choices,
+          "scheduled_broadcast",
           token
         );
+        if (sent === null) continue;
         sentCount++;
         sentTo.push(friend.display_name || friend.line_user_id);
       } catch (err) {

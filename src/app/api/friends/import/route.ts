@@ -190,9 +190,9 @@ export async function POST(request: NextRequest) {
       skipped,
       failed,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
-      { error: err.message || "インポートに失敗しました" },
+      { error: (err instanceof Error ? err.message : null) || "インポートに失敗しました" },
       { status: 500 }
     );
   }

@@ -194,14 +194,17 @@ export async function POST(request: NextRequest) {
           targets,
           blocks as MessageBlock[],
           "broadcast",
+          "scheduled_broadcast",
           undefined,
           token
         );
       } else {
         if (lineMessages && lineMessages.length > 0) {
-          await broadcastMessages(lineMessages as any[], token);
+          const sent = await broadcastMessages(lineMessages, "scheduled_broadcast", token);
+          if (sent === null) return NextResponse.json({ sent: false, skipped: true, deliveredCount: 0, error: "送信制御によりスキップしました" }, { status: 409 });
         } else if (message) {
-          await broadcastMessage(message, token);
+          const sent = await broadcastMessage(message, "scheduled_broadcast", token);
+          if (sent === null) return NextResponse.json({ sent: false, skipped: true, deliveredCount: 0, error: "送信制御によりスキップしました" }, { status: 409 });
         }
         deliveredCount = targets.length;
         await logBroadcastSent(supabase, targets, blocks || null, message);
@@ -226,6 +229,7 @@ export async function POST(request: NextRequest) {
             targets,
             blocks as MessageBlock[],
             "broadcast",
+            "scheduled_broadcast",
             undefined,
             token
           );
@@ -234,14 +238,14 @@ export async function POST(request: NextRequest) {
           // LINE マルチキャストは500人まで
           for (let i = 0; i < userIds.length; i += 500) {
             const chunk = userIds.slice(i, i + 500);
-            if (lineMessages && lineMessages.length > 0) {
-              await multicastMessages(chunk, lineMessages as any[], token);
-            } else if (message) {
-              await multicastMessage(chunk, message, token);
+            const sent = lineMessages && lineMessages.length > 0
+              ? await multicastMessages(chunk, lineMessages, "scheduled_broadcast", token)
+              : message ? await multicastMessage(chunk, message, "scheduled_broadcast", token) : null;
+            if (sent !== null) {
+              deliveredCount += chunk.length;
+              await logBroadcastSent(supabase, targets.slice(i, i + 500), blocks || null, message);
             }
           }
-          deliveredCount = targets.length;
-          await logBroadcastSent(supabase, targets, blocks || null, message);
         }
       }
     } else if (targetType === "survey" && targetChoiceId) {
@@ -253,11 +257,11 @@ export async function POST(request: NextRequest) {
 
       if (responses && responses.length > 0) {
         let targets = responses
-          .map((r: any) => r.friends)
-          .filter(Boolean) as FriendForPersonalize[];
+          .map((r) => r.friends)
+          .filter(Boolean) as unknown as (FriendForPersonalize & { account_id?: string })[];
         if (accountId) {
           targets = targets.filter(
-            (f: any) => !f.account_id || f.account_id === accountId
+            (f) => !f.account_id || f.account_id === accountId
           );
         }
 
@@ -267,6 +271,7 @@ export async function POST(request: NextRequest) {
             targets,
             blocks as MessageBlock[],
             "broadcast",
+            "scheduled_broadcast",
             undefined,
             token
           );
@@ -274,16 +279,21 @@ export async function POST(request: NextRequest) {
           const userIds = targets.map((f) => f.line_user_id);
           for (let i = 0; i < userIds.length; i += 500) {
             const chunk = userIds.slice(i, i + 500);
-            if (lineMessages && lineMessages.length > 0) {
-              await multicastMessages(chunk, lineMessages as any[], token);
-            } else if (message) {
-              await multicastMessage(chunk, message, token);
+            const sent = lineMessages && lineMessages.length > 0
+              ? await multicastMessages(chunk, lineMessages, "scheduled_broadcast", token)
+              : message ? await multicastMessage(chunk, message, "scheduled_broadcast", token) : null;
+            if (sent !== null) {
+              deliveredCount += chunk.length;
+              await logBroadcastSent(supabase, targets.slice(i, i + 500), blocks || null, message);
             }
           }
-          deliveredCount = targets.length;
-          await logBroadcastSent(supabase, targets, blocks || null, message);
         }
       }
+    }
+
+    if (deliveredCount === 0) {
+      return NextResponse.json({ sent: false, skipped: true, deliveredCount: 0,
+        error: "送信されませんでした。送信制御設定・対象・ログを確認してください" }, { status: 409 });
     }
 
     // 配信履歴を保存
@@ -316,9 +326,9 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ broadcast, deliveredCount });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
-      { error: err.message || "配信に失敗しました" },
+      { error: (err instanceof Error ? err.message : null) || "配信に失敗しました" },
       { status: 500 }
     );
   }

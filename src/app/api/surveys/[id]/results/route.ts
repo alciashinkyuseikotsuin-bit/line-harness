@@ -52,16 +52,16 @@ export async function GET(
 
   // 質問ごとに集計
   const questions = (survey.survey_questions || [])
-    .sort((a: any, b: any) => a.sort_order - b.sort_order)
-    .map((q: any) => {
+    .sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order)
+    .map((q: { id: string; question_text: string; survey_choices: { id: string; choice_text: string; tag: string | null; broadcast_message: string | null; sort_order: number }[] }) => {
       const qResponses = (responses || []).filter(
         (r) => r.question_id === q.id
       );
       const totalResponses = qResponses.length;
 
       const choices = (q.survey_choices || [])
-        .sort((a: any, b: any) => a.sort_order - b.sort_order)
-        .map((c: any) => {
+        .sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order)
+        .map((c) => {
           const count = qResponses.filter(
             (r) => r.choice_id === c.id
           ).length;

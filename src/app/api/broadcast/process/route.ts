@@ -16,6 +16,7 @@ import {
   type FriendForPersonalize,
 } from "@/lib/personalize";
 import { getAccountById, resolveToken, type LineAccount } from "@/lib/accounts";
+import { verifyCronSecret } from "@/lib/cron-auth";
 
 const FRIEND_SELECT = "id, line_user_id, display_name, points, stage";
 
@@ -39,10 +40,21 @@ async function logSent(
 
 // 予約配信ワーカー（Vercel Cron から呼ばれる）
 // scheduled_at が現在時刻以下 + status='scheduled' の broadcasts を順次送信
-export async function GET() {
+// 引数なしの既存テスト呼び出しと、Next.js の Request 型検証を両立する。
+export function GET(): Promise<NextResponse>;
+export function GET(request: Request): Promise<NextResponse>;
+export async function GET(request?: Request) {
+  if (process.env.CRON_SECRET && (!request || !verifyCronSecret(request))) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   return runProcess();
 }
-export async function POST() {
+export function POST(): Promise<NextResponse>;
+export function POST(request: Request): Promise<NextResponse>;
+export async function POST(request?: Request) {
+  if (process.env.CRON_SECRET && (!request || !verifyCronSecret(request))) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   return runProcess();
 }
 
@@ -133,13 +145,16 @@ async function runProcess() {
             targets,
             blocks,
             "broadcast",
+            "scheduled_broadcast",
             undefined,
             token
           );
         } else {
-          await broadcastMessages(lineMessages as unknown[] as never[], token);
-          deliveredCount = targets.length;
-          await logSent(supabase, targets, blocks);
+          const sent = await broadcastMessages(lineMessages, "scheduled_broadcast", token);
+          if (sent !== null) {
+            deliveredCount = targets.length;
+            await logSent(supabase, targets, blocks);
+          }
         }
       } else if (
         b.target_type === "segment" &&
@@ -163,6 +178,7 @@ async function runProcess() {
             targets,
             blocks,
             "broadcast",
+            "scheduled_broadcast",
             undefined,
             token
           );
@@ -170,10 +186,12 @@ async function runProcess() {
           const userIds = targets.map((f) => f.line_user_id);
           for (let i = 0; i < userIds.length; i += 500) {
             const chunk = userIds.slice(i, i + 500);
-            await multicastMessages(chunk, lineMessages as unknown[] as never[], token);
+            const sent = await multicastMessages(chunk, lineMessages, "scheduled_broadcast", token);
+            if (sent !== null) {
+              deliveredCount += chunk.length;
+              await logSent(supabase, targets.slice(i, i + 500), blocks);
+            }
           }
-          deliveredCount = targets.length;
-          await logSent(supabase, targets, blocks);
         }
       }
 

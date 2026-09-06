@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { pushMessage, pushMessages } from "@/lib/line";
+import { pushMessage, pushMessages, type SendFeature } from "@/lib/line";
 import { logMessage } from "@/lib/logging";
 import { renderTemplate, type FriendForPersonalize } from "@/lib/personalize";
 import { getAccountById, resolveToken, type LineAccount } from "@/lib/accounts";
@@ -31,7 +31,8 @@ export async function enrollMatchingStepFlows(
   supabase: SupabaseClient,
   friendId: string,
   friendTags: string[],
-  accountId?: string
+  accountId: string | undefined,
+  originFeature: SendFeature
 ): Promise<void> {
   // アカウント未指定なら友だちから引く（同じアカウントのフローだけに登録する）
   let effectiveAccountId = accountId;
@@ -126,7 +127,7 @@ export async function enrollMatchingStepFlows(
   // 「今すぐ送るべき」1通目は、cronの巡回を待たずこの場で送信する
   for (const enrollmentId of immediateEnrollmentIds) {
     try {
-      await processDueEnrollmentById(supabase, enrollmentId);
+      await processDueEnrollmentById(supabase, enrollmentId, undefined, originFeature);
     } catch (err) {
       console.error("即時ステップ配信エラー:", err);
       // ここで失敗しても enrollment 自体は active のまま残るので、
@@ -143,7 +144,8 @@ export async function enrollMatchingStepFlows(
 export async function processDueEnrollmentById(
   supabase: SupabaseClient,
   enrollmentId: string,
-  accountCache?: Map<string, LineAccount | null>
+  accountCache: Map<string, LineAccount | null> | undefined,
+  feature: SendFeature
 ): Promise<{ sent: boolean; completed: boolean }> {
   const cache = accountCache || new Map<string, LineAccount | null>();
 
@@ -202,6 +204,7 @@ export async function processDueEnrollmentById(
   // blocks が無い旧データは従来どおり message_text をテキスト送信。
   const blocks = currentMessage.message_blocks as MessageBlock[] | null;
   let logContent: string;
+  let wasSent = false;
 
   if (Array.isArray(blocks) && blocks.length > 0) {
     const personalized: MessageBlock[] = friend
@@ -213,7 +216,8 @@ export async function processDueEnrollmentById(
       : blocks;
     const lineMessages = await blocksToLineMessagesAsync(personalized, supabase);
     if (lineMessages.length === 0) return { sent: false, completed: false };
-    await pushMessages(lineUserId, lineMessages, token);
+    const result = await pushMessages(lineUserId, lineMessages, feature, token);
+    wasSent = result !== null;
     logContent =
       personalized
         .filter((b) => b.type === "text" && b.text)
@@ -223,17 +227,19 @@ export async function processDueEnrollmentById(
     const text = friend
       ? renderTemplate(currentMessage.message_text, friend)
       : currentMessage.message_text;
-    await pushMessage(lineUserId, text, token);
+    const result = await pushMessage(lineUserId, text, feature, token);
+    wasSent = result !== null;
     logContent = text;
   }
 
-  await logMessage(supabase, enrollment.friend_id, {
+  if (wasSent) await logMessage(supabase, enrollment.friend_id, {
     direction: "out",
     content: logContent,
     source: "step",
     metadata: { flow_id: enrollment.flow_id, step: enrollment.current_step },
   });
 
+  // A gate skip consumes this step as well: do not queue it for a later cron retry.
   const nextStep = enrollment.current_step + 1;
 
   if (nextStep >= messages.length) {
@@ -241,7 +247,7 @@ export async function processDueEnrollmentById(
       .from("step_enrollments")
       .update({ current_step: nextStep, status: "completed" })
       .eq("id", enrollment.id);
-    return { sent: true, completed: true };
+    return { sent: wasSent, completed: true };
   }
 
   const nextMessage = messages[nextStep];
@@ -256,5 +262,5 @@ export async function processDueEnrollmentById(
     })
     .eq("id", enrollment.id);
 
-  return { sent: true, completed: false };
+  return { sent: wasSent, completed: false };
 }

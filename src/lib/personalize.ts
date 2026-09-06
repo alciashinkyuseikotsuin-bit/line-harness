@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { pushMessages } from "@/lib/line";
+import { pushMessages, type SendFeature } from "@/lib/line";
 import { logMessage } from "@/lib/logging";
 import type { MessageBlock } from "@/types/blocks";
 import { blocksToLineMessagesAsync } from "@/lib/blocks-to-line";
@@ -61,6 +61,7 @@ export async function sendPersonalizedBlocks(
   friends: FriendForPersonalize[],
   blocks: MessageBlock[],
   source: string,
+  feature: SendFeature,
   metadata?: Record<string, unknown>,
   token?: string
 ): Promise<number> {
@@ -78,7 +79,8 @@ export async function sendPersonalizedBlocks(
       );
       if (lineMessages.length === 0) continue;
 
-      await pushMessages(friend.line_user_id, lineMessages, token);
+      const result = await pushMessages(friend.line_user_id, lineMessages, feature, token);
+      if (result === null) continue;
       sent++;
 
       const textContent = personalized

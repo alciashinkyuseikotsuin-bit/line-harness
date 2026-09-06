@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 
   // 各フローの登録者数を取得
   const flowsWithCount = await Promise.all(
-    (flows || []).map(async (flow: any) => {
+    (flows || []).map(async (flow) => {
       const { count } = await supabase
         .from("step_enrollments")
         .select("*", { count: "exact", head: true })
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
       return {
         ...flow,
-        step_messages: (flow.step_messages || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
+        step_messages: (flow.step_messages || []).sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order),
         enrolled_count: count || 0,
       };
     })

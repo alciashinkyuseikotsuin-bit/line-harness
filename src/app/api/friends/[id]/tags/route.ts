@@ -29,7 +29,7 @@ export async function POST(
   await supabase.from("friends").update({ tags: newTags }).eq("id", id);
 
   // 更新後のタグセットでマッチするステップフローへ enroll
-  await enrollMatchingStepFlows(supabase, id, newTags);
+  await enrollMatchingStepFlows(supabase, id, newTags, undefined, "tag_triggered");
 
   return NextResponse.json({ tags: newTags });
 }

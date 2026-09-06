@@ -79,7 +79,7 @@ export async function GET(
               .from("friends")
               .update({ tags: merged })
               .eq("id", friend.id);
-            await enrollMatchingStepFlows(supabase, friend.id, merged);
+            await enrollMatchingStepFlows(supabase, friend.id, merged, undefined, "link_triggered");
           }
         }
 

@@ -8,9 +8,20 @@ export type AutoReply = {
   reply_text: string;
   add_tags: string[];
   points: number;
+  cascade: boolean;
   once_per_friend: boolean;
   priority: number;
 };
+
+/** 全角英数字・全角スペースを半角化し、前後空白を除去して小文字化する */
+export function normalizeForMatch(text: string): string {
+  const halfWidth = text
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) =>
+      String.fromCharCode(c.charCodeAt(0) - 0xfee0)
+    )
+    .replace(/　/g, " ");
+  return halfWidth.trim().toLowerCase();
+}
 
 /**
  * 受信テキストにマッチする自動応答を1件返す（priority 降順で最初のマッチ）
@@ -32,11 +43,11 @@ export async function findAutoReply(
 
   if (!replies || replies.length === 0) return null;
 
-  const normalized = text.trim().toLowerCase();
+  const normalized = normalizeForMatch(text);
 
   for (const reply of replies as AutoReply[]) {
     const matched = (reply.keywords || []).some((kw) => {
-      const k = kw.trim().toLowerCase();
+      const k = normalizeForMatch(kw);
       if (!k) return false;
       return reply.match_type === "exact"
         ? normalized === k

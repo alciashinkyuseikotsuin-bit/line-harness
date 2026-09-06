@@ -147,12 +147,13 @@ export async function awardPoints(
           }
 
           try {
-            await pushMessages(
+            const sent = await pushMessages(
               friend.line_user_id,
               [{ type: "text", text: reward.message }],
+              "points",
               token
             );
-            await logMessage(supabase, friend.id, {
+            if (sent !== null) await logMessage(supabase, friend.id, {
               direction: "out",
               content: reward.message,
               source: "reward",
@@ -175,7 +176,7 @@ export async function awardPoints(
             .update({ tags })
             .eq("id", friend.id);
           // 特典タグでステップ配信が発火する可能性
-          await enrollMatchingStepFlows(supabase, friend.id, tags);
+          await enrollMatchingStepFlows(supabase, friend.id, tags, current?.account_id || undefined, "points");
         }
       }
     }

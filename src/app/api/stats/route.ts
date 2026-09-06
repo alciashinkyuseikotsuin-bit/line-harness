@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
   );
 
   // アンケート回答数（friends経由でアカウントを絞る）
-  let surveyResponsesQuery = accountId
+  const surveyResponsesQuery = accountId
     ? supabase
         .from("survey_responses")
         .select("*, friends!inner(account_id)", { count: "exact", head: true })
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
     .gte("last_active_at", jstDayStartUtc);
   if (accountId) activeTodayQuery = activeTodayQuery.eq("account_id", accountId);
 
-  let inboundTodayQuery = accountId
+  const inboundTodayQuery = accountId
     ? supabase
         .from("messages")
         .select("*, friends!inner(account_id)", { count: "exact", head: true })

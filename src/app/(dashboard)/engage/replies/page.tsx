@@ -25,6 +25,7 @@ type AutoReply = {
   reply_text: string;
   add_tags: string[];
   points: number;
+  cascade: boolean;
   once_per_friend: boolean;
   active: boolean;
   priority: number;
@@ -33,10 +34,11 @@ type AutoReply = {
 const emptyForm = {
   name: "",
   keywords: "",
-  match_type: "partial" as "exact" | "partial",
+  match_type: "exact" as "exact" | "partial",
   reply_text: "",
   add_tags: "",
   points: 0,
+  cascade: false,
   once_per_friend: false,
   active: true,
   priority: 0,
@@ -73,6 +75,7 @@ export default function AutoRepliesPage() {
       reply_text: reply.reply_text,
       add_tags: (reply.add_tags || []).join(", "),
       points: reply.points,
+      cascade: reply.cascade === true,
       once_per_friend: reply.once_per_friend,
       active: reply.active,
       priority: reply.priority,
@@ -94,6 +97,7 @@ export default function AutoRepliesPage() {
       reply_text: form.reply_text,
       add_tags: form.add_tags.split(",").map((t) => t.trim()).filter(Boolean),
       points: Number(form.points) || 0,
+      cascade: form.cascade,
       once_per_friend: form.once_per_friend,
       active: form.active,
       priority: Number(form.priority) || 0,
@@ -237,6 +241,15 @@ export default function AutoRepliesPage() {
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
                 type="checkbox"
+                checked={form.cascade}
+                onChange={(e) => setForm({ ...form, cascade: e.target.checked })}
+                className="rounded"
+              />
+              タグ付与・ポイント付与・ステップ配信も連動させる（オフ推奨: オンにすると1回の反応で複数通に増える場合があります）
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
                 checked={form.once_per_friend}
                 onChange={(e) => setForm({ ...form, once_per_friend: e.target.checked })}
                 className="rounded"
@@ -339,6 +352,11 @@ export default function AutoRepliesPage() {
                         {reply.points > 0 && (
                           <Badge variant="outline" className="text-xs">
                             +{reply.points}pt
+                          </Badge>
+                        )}
+                        {reply.cascade === true && (
+                          <Badge variant="destructive" className="text-xs">
+                            連鎖あり
                           </Badge>
                         )}
                       </div>

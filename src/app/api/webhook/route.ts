@@ -3,44 +3,13 @@ import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   getUserProfile,
-  pushMessage as pushMessageLive,
-  pushMessages as pushMessagesLive,
+  pushMessage,
+  pushMessages,
   buildSurveyFlexMessage,
 } from "@/lib/line";
 
-// 2026-07-18 オーナー指示（クレーム対応）: webhook起点の自動応答（挨拶アンケート・
-// アンケート続き質問・キーワード応答・ポイント/おみくじ/ログイン応答）を全停止。
-// 受信の記録・友だち登録・回答保存は動き続ける。送信だけが止まる。
-// 復旧時はこの定数を false に戻してデプロイする。
-const AUTO_RESPONSES_DISABLED = true;
-
-const pushMessage = async (
-  ...args: Parameters<typeof pushMessageLive>
-): Promise<unknown> => {
-  if (AUTO_RESPONSES_DISABLED) {
-    console.log("[AUTO_RESPONSES_DISABLED] push skipped");
-    return null;
-  }
-  return pushMessageLive(...args);
-};
-
-const pushMessages = async (
-  ...args: Parameters<typeof pushMessagesLive>
-): Promise<unknown> => {
-  if (AUTO_RESPONSES_DISABLED) {
-    console.log("[AUTO_RESPONSES_DISABLED] push skipped");
-    return null;
-  }
-  return pushMessagesLive(...args);
-};
-
-// 停止中は「送っていない送信」を messages に残さない（受信ログはそのまま記録）
-const logMessage: typeof logMessageLive = async (supabaseClient, friendId, opts) => {
-  if (AUTO_RESPONSES_DISABLED && opts.direction === "out") return;
-  return logMessageLive(supabaseClient, friendId, opts);
-};
 import { enrollMatchingStepFlows } from "@/lib/step-enrollment";
-import { logMessage as logMessageLive, logEvent } from "@/lib/logging";
+import { logMessage, logEvent } from "@/lib/logging";
 import { awardPoints, getPointRules } from "@/lib/points";
 import { recalcFriendScore } from "@/lib/engagement";
 import {
@@ -180,7 +149,8 @@ async function sendActiveSurveyFirstQuestion(
   lineUserId: string,
   token: string | undefined,
   accountId: string | undefined,
-  greetingText: string
+  greetingText: string,
+  feature: "greeting_survey" | "survey_followup"
 ): Promise<boolean> {
   try {
     // step_only（ステップ配信専用）のアンケートは、友だち追加直後や
@@ -200,28 +170,29 @@ async function sendActiveSurveyFirstQuestion(
     if (accountId) {
       surveyQuery = surveyQuery.eq("account_id", accountId);
     }
-    const { data: survey } = await (surveyQuery as any).maybeSingle();
+    const { data: survey } = await surveyQuery.maybeSingle();
     if (!survey) return false;
 
     const sortedQuestions = (survey.survey_questions || []).sort(
-      (a: any, b: any) => a.sort_order - b.sort_order
+      (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
     );
     const firstQ = sortedQuestions[0];
     if (!firstQ) return false;
 
     const choices = (firstQ.survey_choices || [])
-      .sort((a: any, b: any) => a.sort_order - b.sort_order)
-      .map((c: any) => ({ id: c.id, text: c.choice_text }));
+      .sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order)
+      .map((c: { id: string; choice_text: string }) => ({ id: c.id, text: c.choice_text }));
 
-    await pushMessages(
+    const sent = await pushMessages(
       lineUserId,
       [
         { type: "text", text: greetingText },
         buildSurveyFlexMessage(survey.id, firstQ.id, firstQ.question_text, choices),
       ],
+      feature,
       token
     );
-    await logMessage(supabase, friendId, {
+    if (sent !== null) await logMessage(supabase, friendId, {
       direction: "out",
       content: `${greetingText}\n\nアンケート: ${firstQ.question_text}`,
       source: "survey",
@@ -352,7 +323,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = JSON.parse(body) as {
     destination?: string;
-    events: Record<string, any>[];
+    events: import("@line/bot-sdk").WebhookEvent[];
   };
   const supabase = getSupabaseAdmin();
 
@@ -375,6 +346,7 @@ export async function POST(request: NextRequest) {
     try {
       switch (event.type) {
         case "follow": {
+          if (!event.source.userId) break;
           // 友だち追加
           const profile = await getUserProfile(event.source.userId, token);
           const row: Record<string, unknown> = {
@@ -419,7 +391,8 @@ export async function POST(request: NextRequest) {
               supabase,
               followed.id,
               tagsWithFollow,
-              accountId
+              accountId,
+              "greeting_survey"
             );
 
             // ウェルカムアンケートを自動送信（最新のstatus=active、step_only除く）
@@ -429,7 +402,8 @@ export async function POST(request: NextRequest) {
               event.source.userId,
               token,
               accountId,
-              "友達追加ありがとうございます！\n\nあなたに最適な情報をお届けするために、1分でできるアンケートにご協力ください📝"
+              "友達追加ありがとうございます！\n\nあなたに最適な情報をお届けするために、1分でできるアンケートにご協力ください📝",
+              "greeting_survey"
             );
           }
           break;
@@ -567,8 +541,8 @@ export async function POST(request: NextRequest) {
 
             const pushTask =
               messagesToSend.length > 0
-                ? pushMessages(pbUserId, messagesToSend, token)
-                    .then(() =>
+                ? pushMessages(pbUserId, messagesToSend, "survey_followup", token)
+                    .then((sent) => sent === null ? undefined :
                       logMessage(supabase, friend.id, {
                         direction: "out",
                         content: messagesToSend
@@ -593,7 +567,7 @@ export async function POST(request: NextRequest) {
             // バックグラウンド処理: ステップフロー登録・ポイント付与
             // enrollMatchingStepFlows は updatedTags を直接受け取るため friends.update の完了を待つ必要がない
             const bgTasks: Promise<unknown>[] = [
-              enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId),
+              enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId, "survey_followup"),
             ];
             if (!isReAnswer && rules.survey_answer > 0) {
               bgTasks.push(
@@ -638,7 +612,7 @@ export async function POST(request: NextRequest) {
           if (!friend) break;
 
           const isText = event.message?.type === "text" && !!event.message?.text;
-          const inboundText: string = isText ? event.message.text : "";
+          const inboundText = event.message.type === "text" ? event.message.text : "";
 
           // === 応答速度の要 ===
           // 受信ログ・イベント記録・最終アクティブ更新は返信内容に影響しないため、
@@ -676,8 +650,8 @@ export async function POST(request: NextRequest) {
               });
               const replyText =
                 "✅ 本人確認ができました！\nサイトの画面に戻ると、自動でログイン済みに切り替わります。";
-              await pushMessage(userId, replyText, token);
-              deferred.push(
+              const sent = await pushMessage(userId, replyText, "login", token);
+              if (sent !== null) deferred.push(
                 logMessage(supabase, friend.id, {
                   direction: "out",
                   content: replyText,
@@ -713,14 +687,13 @@ export async function POST(request: NextRequest) {
               .eq("id", friend.id);
 
             const ackText = `「${inputText}」で登録しました！ありがとうございます。`;
-            await pushMessage(userId, ackText, token);
-            await logMessage(supabase, friend.id, {
+            const ackSent = await pushMessage(userId, ackText, "survey_followup", token);
+            if (ackSent !== null) await logMessage(supabase, friend.id, {
               direction: "out",
               content: ackText,
               source: "survey",
             });
-
-            await enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId);
+            await enrollMatchingStepFlows(supabase, friend.id, updatedTags, accountId, "survey_followup");
 
             // 自由記入が含まれていたアンケートの次質問 / 完了メッセージ
             if (pendingInput.survey_id && pendingInput.question_id) {
@@ -741,11 +714,12 @@ export async function POST(request: NextRequest) {
                     supabase,
                     friend.id,
                     withDiagTag,
-                    accountId
+                    accountId,
+                    "survey_followup"
                   );
                 }
                 if (nextStep.messages.length > 0) {
-                  await pushMessages(userId, nextStep.messages, token);
+                  await pushMessages(userId, nextStep.messages, "survey_followup", token);
                 }
               } catch (nextErr) {
                 console.error("自由記入後の次質問/完了送信エラー:", nextErr);
@@ -787,15 +761,15 @@ export async function POST(request: NextRequest) {
               } else {
                 replyText = "おみくじは準備中です。もう少しお待ちください！";
               }
-              await pushMessage(userId, replyText, token);
-              deferred.push(
+              const sent = await pushMessage(userId, replyText, "omikuji", token);
+              if (sent !== null) deferred.push(
                 logMessage(supabase, friend.id, {
                   direction: "out",
                   content: replyText,
                   source: "omikuji",
-                }),
-                recalcFriendScore(supabase, friend.id)
+                })
               );
+              deferred.push(recalcFriendScore(supabase, friend.id));
               break;
             }
 
@@ -813,7 +787,8 @@ export async function POST(request: NextRequest) {
                 if (doneEvent) {
                   const replyText =
                     "アンケートにはすでにご回答いただいています🙏\nあなたに合わせたプレゼントもお届け済みです。\n\n状況が変わったのでもう一度回答し直したい場合は、「再診断」と送ってください。";
-                  await pushMessage(userId, replyText, token);
+                  const sent = await pushMessage(userId, replyText, "survey_followup", token);
+                  if (sent === null) break;
                   deferred.push(
                     logMessage(supabase, friend.id, {
                       direction: "out",
@@ -848,11 +823,13 @@ export async function POST(request: NextRequest) {
                 accountId,
                 builtin === "resurvey"
                   ? "再診断ですね！最新の状況で答えてください📝"
-                  : "ご協力ありがとうございます！早速いきましょう📝"
+                  : "ご協力ありがとうございます！早速いきましょう📝",
+                "survey_followup"
               );
               if (!sent) {
                 const replyText = "現在お送りできるアンケートがありません。もう少しお待ちください🙏";
-                await pushMessage(userId, replyText, token);
+                const sent = await pushMessage(userId, replyText, "survey_followup", token);
+                if (sent === null) break;
                 deferred.push(
                   logMessage(supabase, friend.id, {
                     direction: "out",
@@ -889,7 +866,8 @@ export async function POST(request: NextRequest) {
               }
               replyText +=
                 "\n\n【ポイントの貯め方】\n・配信で紹介するリンクをチェック → 5pt\n・アンケート（1分問診）に回答 → 最大24pt\n・配信のキーワード企画に参加 → 企画ごとに案内\n\n貯まったポイントは、資料室の🔒ポイント特典と交換できます📚（交換ページは現在調整中です。準備ができ次第ご案内します）";
-              await pushMessage(userId, replyText, token);
+              const sent = await pushMessage(userId, replyText, "points", token);
+              if (sent === null) break;
               deferred.push(
                 logMessage(supabase, friend.id, {
                   direction: "out",
@@ -908,14 +886,14 @@ export async function POST(request: NextRequest) {
               accountId
             );
             if (autoReply) {
-              await pushMessage(userId, autoReply.reply_text, token);
+              const sent = await pushMessage(userId, autoReply.reply_text, "keyword_reply", token);
               deferred.push(
-                logMessage(supabase, friend.id, {
+                ...(sent === null ? [] : [logMessage(supabase, friend.id, {
                   direction: "out",
                   content: autoReply.reply_text,
                   source: "auto_reply",
                   metadata: { reply_id: autoReply.id, name: autoReply.name },
-                }),
+                })]),
                 logEvent(supabase, friend.id, "keyword_reply", {
                   reply_id: autoReply.id,
                   name: autoReply.name,
@@ -923,37 +901,40 @@ export async function POST(request: NextRequest) {
                 })
               );
 
-              // タグ付与
-              const addTags = (autoReply.add_tags || []).filter(Boolean);
-              if (addTags.length > 0) {
-                const currentTags: string[] = friend.tags || [];
-                const merged = [
-                  ...currentTags,
-                  ...addTags.filter((t) => !currentTags.includes(t)),
-                ];
-                if (merged.length !== currentTags.length) {
-                  await supabase
-                    .from("friends")
-                    .update({ tags: merged })
-                    .eq("id", friend.id);
-                  await enrollMatchingStepFlows(
+              if (autoReply.cascade === true) {
+                // タグ付与
+                const addTags = (autoReply.add_tags || []).filter(Boolean);
+                if (addTags.length > 0) {
+                  const currentTags: string[] = friend.tags || [];
+                  const merged = [
+                    ...currentTags,
+                    ...addTags.filter((t) => !currentTags.includes(t)),
+                  ];
+                  if (merged.length !== currentTags.length) {
+                    await supabase
+                      .from("friends")
+                      .update({ tags: merged })
+                      .eq("id", friend.id);
+                    await enrollMatchingStepFlows(
+                      supabase,
+                      friend.id,
+                      merged,
+                      accountId,
+                      "keyword_reply"
+                    );
+                  }
+                }
+
+                // ポイント付与
+                if (autoReply.points > 0) {
+                  await awardPoints(
                     supabase,
-                    friend.id,
-                    merged,
-                    accountId
+                    { id: friend.id, line_user_id: userId },
+                    autoReply.points,
+                    `キーワード「${autoReply.name}」`,
+                    { reply_id: autoReply.id }
                   );
                 }
-              }
-
-              // ポイント付与
-              if (autoReply.points > 0) {
-                await awardPoints(
-                  supabase,
-                  { id: friend.id, line_user_id: userId },
-                  autoReply.points,
-                  `キーワード「${autoReply.name}」`,
-                  { reply_id: autoReply.id }
-                );
               }
             }
           }

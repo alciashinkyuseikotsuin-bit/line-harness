@@ -38,7 +38,8 @@ export async function POST(
   try {
     const account = await getAccountForFriend(supabase, id);
     const token = resolveToken(account);
-    await pushMessage(friend.line_user_id, text, token);
+    const sent = await pushMessage(friend.line_user_id, text, "manual_chat", token);
+    if (sent === null) return NextResponse.json({ sent: false, skipped: true, error: "送信制御によりスキップしました" }, { status: 409 });
   } catch (err) {
     console.error("1:1送信失敗:", err);
     return NextResponse.json(

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { processDueEnrollmentById } from "@/lib/step-enrollment";
 import type { LineAccount } from "@/lib/accounts";
+import { verifyCronSecret } from "@/lib/cron-auth";
 
 // ステップ配信の実行（定期実行用・保険）
 //
@@ -10,11 +11,19 @@ import type { LineAccount } from "@/lib/accounts";
 // 即時送信が何らかの理由で失敗した分のリトライ。
 //
 // Vercel cron は GET で叩くため、GET も同じ処理につなぐ（POSTのみだと405で空振りする）
-export async function GET() {
-  return POST();
+// 引数なしの既存テスト呼び出しと、Next.js の Request 型検証を両立する。
+export function GET(): Promise<NextResponse>;
+export function GET(request: Request): Promise<NextResponse>;
+export async function GET(request?: Request) {
+  return request ? POST(request) : POST();
 }
 
-export async function POST() {
+export function POST(): Promise<NextResponse>;
+export function POST(request: Request): Promise<NextResponse>;
+export async function POST(request?: Request) {
+  if (process.env.CRON_SECRET && (!request || !verifyCronSecret(request))) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   const supabase = getSupabaseAdmin();
   const now = new Date().toISOString();
 
@@ -33,7 +42,7 @@ export async function POST() {
 
   for (const enrollment of enrollments || []) {
     try {
-      const result = await processDueEnrollmentById(supabase, enrollment.id, accountCache);
+      const result = await processDueEnrollmentById(supabase, enrollment.id, accountCache, "step_flow");
       if (result.sent) sent++;
       if (result.completed) completed++;
     } catch (err) {
